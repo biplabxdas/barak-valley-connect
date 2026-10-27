@@ -124,7 +124,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="Local Business Service Platform",
+    title="Barak Valley Connect",
     description="Find a local service provider and send a service request.",
     version="1.0.0",
     lifespan=lifespan,
@@ -132,7 +132,7 @@ app = FastAPI(
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
-    session_cookie="neighbourhood_session",
+    session_cookie="barak_valley_connect_session",
     same_site="strict",
     https_only=APP_ENV == "production",
     max_age=60 * 60 * 12,
