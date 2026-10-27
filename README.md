@@ -1,4 +1,4 @@
-# Local Business Management & Service Platform
+# Barak Valley Connect — Local Services
 
 A browser website for a small local service directory. Development mode includes sample Silchar businesses; production mode starts with an empty database and should be populated only with businesses that agreed to be listed.
 
@@ -97,7 +97,7 @@ This is a deployment starting point, not proof that the site has been launched o
 
 Once you can explain the running version, describe it accurately on your CV, for example:
 
-**Local Business Management & Service Platform** — Python, FastAPI, SQLite/PostgreSQL, REST APIs
+**Barak Valley Connect** — Python, FastAPI, SQLite/PostgreSQL, REST APIs
 
 - Built a local service directory with provider listing management, service requests, and request-status updates.
 - Designed related provider and request tables and implemented REST API routes with input validation and database persistence.
