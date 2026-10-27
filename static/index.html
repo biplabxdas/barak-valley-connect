@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A simple way to find and request local services in Silchar.">
+  <title>Neighbourhood — Local Services</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/management.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Neighbourhood home"><span class="brand-mark">N</span> neighbourhood</a>
+    <div class="header-actions"><span class="location">⌖ <span>Silchar, Assam</span></span><button id="admin-button" class="manage-button">Website owner sign in</button></div>
+  </header>
+  <main>
+    <section class="hero">
+      <p class="eyebrow">GOOD PEOPLE, CLOSE BY</p>
+      <h1>Small jobs. <em>Great locals.</em></h1>
+      <p class="intro">Find a trusted service around your neighbourhood and request help in a few simple steps.</p>
+      <div class="search-row">
+        <label class="search-label" for="category-filter">I need help with</label>
+        <select id="category-filter"><option value="">All services</option></select>
+        <button id="search-button" class="button button-dark">Find a local pro <span>→</span></button>
+      </div>
+      <p class="microcopy">Local service providers serving Silchar</p>
+    </section>
+    <p id="success-message" class="success-message" role="status" hidden></p>
+    <section class="section-heading">
+      <div><p class="eyebrow">THE NEIGHBOURHOOD LIST</p><h2>People who can help</h2></div>
+      <span id="provider-count" class="count"></span>
+    </section>
+    <section id="provider-list" class="provider-grid" aria-live="polite"></section>
+    <section class="manage-section admin-only" hidden>
+      <div class="section-heading"><div><p class="eyebrow">FOR LOCAL BUSINESSES</p><h2>Manage your listings</h2></div>
+        <button id="add-provider-button" class="button button-dark">Add a provider <span>＋</span></button>
+      </div>
+      <p class="manage-note">Business listings are reviewed and managed by the website owner.</p>
+    </section>
+    <section class="requests-section admin-only" hidden>
+      <div class="section-heading"><div><p class="eyebrow">OWNER MANAGEMENT</p><h2>Recent service requests</h2></div><div class="owner-tools"><span id="request-count" class="count"></span><a class="manage-button" href="/api/admin/requests.csv">Download private backup</a></div></div>
+      <div id="request-list" class="request-list" aria-live="polite"></div>
+      <p class="manage-note">Requests are not emailed yet. Sign in regularly to check for new requests.</p>
+    </section>
+  </main>
+  <dialog id="request-dialog">
+    <form id="request-form" class="request-form">
+      <button type="button" id="close-dialog" class="close-button" aria-label="Close">×</button>
+      <p class="eyebrow">MAKE IT HAPPEN</p><h2>Request a service</h2>
+      <p id="selected-provider" class="selected-provider"></p>
+      <input type="hidden" id="service-id" name="service_id">
+      <label>Your name<input name="customer_name" required minlength="2" maxlength="80" placeholder="e.g. Biplab Das"></label>
+      <label>Phone number<input name="customer_phone" required minlength="7" maxlength="20" placeholder="Your contact number"></label>
+      <label>What do you need?<textarea name="details" required minlength="5" maxlength="500" rows="3" placeholder="Tell us a little about the service you need"></textarea></label>
+      <label class="consent-row"><input name="privacy_consent" type="checkbox" required> I have read the <a href="/privacy" target="_blank" rel="noopener">privacy notice</a> and agree that the website owner may use these details to follow up about this request.</label>
+      <p class="privacy-note">Do not include passwords, payment information, or other sensitive details.</p>
+      <p id="form-message" class="form-message" role="status"></p>
+      <button class="button button-dark submit-button" type="submit">Send request <span>→</span></button>
+    </form>
+  </dialog>
+  <dialog id="admin-login-dialog">
+    <form id="admin-login-form" class="request-form">
+      <button type="button" id="close-admin-dialog" class="close-button" aria-label="Close">×</button>
+      <p class="eyebrow">WEBSITE MANAGEMENT</p><h2>Owner sign in</h2>
+      <label>Owner password<input name="password" type="password" required autocomplete="current-password" placeholder="Enter the website owner password"></label>
+      <p id="admin-message" class="form-message" role="status"></p>
+      <button class="button button-dark submit-button" type="submit">Sign in</button>
+    </form>
+  </dialog>
+  <dialog id="provider-dialog">
+    <form id="provider-form" class="request-form">
+      <button type="button" id="close-provider-dialog" class="close-button" aria-label="Close">×</button>
+      <p class="eyebrow">LOCAL BUSINESS DIRECTORY</p><h2 id="provider-form-title">Add a provider</h2>
+      <input type="hidden" name="provider_id">
+      <label>Business name<input name="name" required minlength="2" maxlength="80" placeholder="e.g. Das Home Services"></label>
+      <label>Service category<input name="category" required minlength="2" maxlength="50" placeholder="e.g. Plumbing"></label>
+      <label>Area served<input name="area" required minlength="2" maxlength="80" placeholder="e.g. Silchar"></label>
+      <label>Contact phone<input name="phone" required minlength="7" maxlength="20" placeholder="Business contact number"></label>
+      <p id="provider-form-message" class="form-message" role="status"></p>
+      <button class="button button-dark submit-button" type="submit">Save listing <span>→</span></button>
+    </form>
+  </dialog>
+  <footer><span class="brand-mark">N</span><span>Made for the places we call home.</span><a class="footer-note" href="/privacy">Privacy notice</a></footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>
+
