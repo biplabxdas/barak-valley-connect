@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: neighbourhood-silchar
+    name: barak-valley-connect
     runtime: python
     plan: free
     region: singapore
