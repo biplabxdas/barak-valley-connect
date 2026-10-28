@@ -1,106 +1,79 @@
-# Barak Valley Connect — Local Services
+# Barak Valley Connect
 
-A browser website for a small local service directory. Development mode includes sample Silchar businesses; production mode starts with an empty database and should be populated only with businesses that agreed to be listed.
+A public pilot website for discovering local service providers in Silchar, Assam.
 
-## What it does
+**Live website:** https://barak-valley-connect.onrender.com
 
-- Lists local service providers and filters them by service category.
-- Adds, edits, and removes providers from the web page.
-- Lets a customer submit a service request.
-- Shows recent requests and lets the demo user change their status.
-- Shows simple totals for providers, requests, pending work, and completed work.
-- Saves local development data in SQLite; public hosting uses a Supabase PostgreSQL database.
-- Provides interactive API documentation at `/docs`.
+## What visitors can do
 
-## Run it on macOS
+- Browse providers by service category and area.
+- Send a service request with their contact details and consent to follow-up.
+- Read the privacy notice.
 
-1. Install Python 3 if it is not already installed: <https://www.python.org/downloads/macos/>.
-2. Open Terminal and go to this project folder.
-3. Create and activate a project-only environment:
+## What the website owner can do
+
+- Sign in to add, edit, and remove business listings.
+- Review service requests and update their status.
+- Download a private CSV backup of requests.
+
+Provider phone numbers are visible only to the signed-in owner. Public visitors use the request form. Add a business only after its owner agrees to be listed.
+
+## Built with
+
+- **Backend:** Python, FastAPI, REST API
+- **Frontend:** HTML, CSS, vanilla JavaScript
+- **Database:** SQLite for local development; Supabase PostgreSQL for the hosted website
+- **Hosting:** Render
+
+## Run locally on macOS
+
+1. Install Python 3.
+2. Open Terminal in the project folder.
+3. Create and activate a virtual environment:
 
    ```sh
    python3 -m venv .venv
    source .venv/bin/activate
    ```
 
-4. Install the app packages and start the website:
+4. Install the dependencies:
 
    ```sh
    python -m pip install -r requirements.txt
+   ```
+
+5. Copy `.env.example` to `.env`. Set your own local `ADMIN_PASSWORD` and `SESSION_SECRET`.
+6. Start the site:
+
+   ```sh
    python -m uvicorn main:app --reload
    ```
 
-5. Open <http://127.0.0.1:8000> for the website or <http://127.0.0.1:8000/docs> to try each API route.
-6. Stop the local server with Control+C in Terminal.
+7. Open http://127.0.0.1:8000. The local development database starts with sample providers; the live website starts empty.
+8. Stop the server with Control+C.
 
-In local development, the owner sign-in password is `local-demo-password`. This is a demo-only password; never use it on a public website.
+Never upload `.env`, database files, or real passwords to GitHub.
 
-For a private local password, copy `.env.example` to `.env`, set a unique `ADMIN_PASSWORD` and a long random `SESSION_SECRET`, then restart the server. `.env` is excluded from GitHub.
+## How it works
 
-The first launch creates `business.db` and inserts three demo providers. Keep that local database out of GitHub; it is generated automatically.
+The page uses JavaScript to send requests to the FastAPI backend. FastAPI validates the submitted data and stores it in a database. Local development uses SQLite; the live service uses Supabase PostgreSQL. A customer request is linked to a provider by its database ID.
 
-## The main idea, in plain language
+## Project concepts
 
-The browser is the customer-facing page. When someone submits a request, its JavaScript sends a request to the Python API. The API checks the input and consent, saves it in SQLite during local development or PostgreSQL in public hosting, then returns a confirmation. Private request data is available only after owner sign-in.
+- **REST API:** HTTP routes let the browser read, add, edit, and remove data.
+- **CRUD:** create, read, update, and delete operations for provider listings and service requests.
+- **Relational database:** provider and request records are stored in related tables.
+- **Validation:** Pydantic checks data before it is saved.
+- **Parameterized SQL:** database values are passed separately from SQL commands.
+- **Sessions:** the owner sign-in is maintained with a protected session cookie.
 
-For example, creating a request travels through:
+## Current scope
 
-`Request form → JavaScript fetch() → POST /api/requests → input validation → SQLite INSERT → JSON response → updated request list`
+This is an early pilot with one owner login. It does not have provider or customer accounts, online payments, or automatic email/SMS alerts. The owner checks requests manually. Free hosting may sleep when idle, and free database services have usage limits; this setup is suitable for a small pilot rather than a high-traffic production service.
 
-## Routes to explore
+## CV summary
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| GET | `/api/providers` | List providers; add `?category=Gardening` to filter |
-| POST | `/api/providers` | Add a provider |
-| PUT | `/api/providers/{id}` | Update a provider |
-| DELETE | `/api/providers/{id}` | Remove a provider |
-| POST | `/api/requests` | Create a customer request |
-| GET | `/api/requests` | List requests with their provider names |
-| PATCH | `/api/requests/{id}/status` | Change a request status (owner only) |
-| DELETE | `/api/requests/{id}` | Delete a request (owner only) |
-| GET | `/api/summary` | Return provider/request counts |
-| GET | `/api/admin/requests.csv` | Download a private request backup (owner only) |
+**Barak Valley Connect** — Python, FastAPI, JavaScript, SQLite/PostgreSQL
 
-## Concepts to be ready to explain
-
-- **Client and server:** the browser displays the interface; FastAPI receives requests and returns data.
-- **REST API:** routes use HTTP methods to describe actions. GET reads, POST creates, PATCH updates, and DELETE removes.
-- **JSON:** the agreed text format used to send structured data between JavaScript and Python.
-- **Relational database:** providers and service requests are stored in separate tables. A request's `service_id` points to one provider's `id` (a foreign key).
-- **CRUD:** create, read, update, delete. This project supports all four across its API routes.
-- **Validation and errors:** Pydantic checks submitted fields; the API returns clear errors for missing records or invalid input.
-- **Parameterized SQL:** values use `?` placeholders instead of being pasted into SQL strings, which helps prevent SQL injection.
-- **Persistence:** SQLite writes to a file, so information stays after the server stops.
-
-## Scope and CV wording
-
-The website has a single owner login for managing a small pilot; it is not a customer or provider account system. Customer contact details and requests are private to the signed-in owner. Public listings omit phone numbers. It does not include online payments or automatic email/SMS notifications.
-
-## Public website preparation
-
-`render.yaml` is a deployment blueprint for a free Render website in Singapore backed by a free Supabase PostgreSQL database in Mumbai. It is intended for a 30-day, low-traffic real-user pilot. The public app uses the remote database because Render's free web service has temporary local storage.
-
-To launch through Render:
-
-1. Publish this project to its own GitHub repository.
-2. Create a free Supabase project in Mumbai. In its database settings, copy the session-mode pooler connection string.
-3. Create a free Render web service from the project repository using `render.yaml`. Add the Supabase connection string as the `DATABASE_URL` secret; never add it to GitHub.
-4. Set a unique `ADMIN_PASSWORD` with at least 16 characters. Render generates the session secret.
-5. Enter the real site operator name and a monitored privacy-contact email. The request retention period is set to 30 days for this trial.
-6. Deploy and open the generated public URL. Production mode starts without sample businesses. The owner must add only businesses that agreed to be listed.
-7. Sign in and download private request backups regularly. Free Supabase does not make automatic backups.
-
-The free service is public but can sleep after 15 minutes without traffic and take about a minute to wake. Supabase Free has a 500 MB database limit and may pause after one week of inactivity; it does not include automatic backups. Free-tier quotas and availability are not a production uptime guarantee. This setup is for a time-limited pilot, not for a growing marketplace. Check [Render free-plan limits](https://render.com/docs/free) and [Supabase pausing and limits](https://supabase.com/pricing).
-
-This is a deployment starting point, not proof that the site has been launched or legally reviewed. It remains local until a free Supabase database and Render service are created and connected.
-
-Once you can explain the running version, describe it accurately on your CV, for example:
-
-**Barak Valley Connect** — Python, FastAPI, SQLite/PostgreSQL, REST APIs
-
-- Built a local service directory with provider listing management, service requests, and request-status updates.
-- Designed related provider and request tables and implemented REST API routes with input validation and database persistence.
-
-Do not list MySQL, customer accounts, or payment handling; they are not part of this website.
-
+- Built a local service directory with category filtering, owner-managed provider listings, and customer service requests.
+- Implemented REST API routes, input validation, session-based owner access, and persistent database storage.
