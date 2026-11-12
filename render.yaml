@@ -19,11 +19,11 @@ services:
       - key: ADMIN_PASSWORD
         sync: false
       - key: SITE_OPERATOR_NAME
-        sync: false
+        value: Barak Valley Connect
       - key: PRIVACY_CONTACT_EMAIL
         sync: false
       - key: REQUEST_RETENTION_DAYS
-        sync: false
+        value: "30"
 
 databases:
   - name: barak-valley-connect-postgres
