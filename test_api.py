@@ -41,11 +41,6 @@ REALISTIC_QUERY_CASES = [
 class ApiIntegrationTests(unittest.TestCase):
     def setUp(self):
         Path(os.environ["DATABASE_PATH"]).unlink(missing_ok=True)
-        main.LOGIN_ATTEMPTS.clear()
-        main.RECOMMENDATION_ATTEMPTS.clear()
-        main.ACCOUNT_LOGIN_ATTEMPTS.clear()
-        main.ACCOUNT_REGISTER_ATTEMPTS.clear()
-        main.REQUEST_ATTEMPTS.clear()
         self.client_context = TestClient(main.app)
         self.client = self.client_context.__enter__()
 
@@ -196,6 +191,16 @@ class ApiIntegrationTests(unittest.TestCase):
             self.assertEqual(self.client.post("/api/recommendations", json=payload).status_code, 200)
         limited = self.client.post("/api/recommendations", json=payload)
         self.assertEqual(limited.status_code, 429)
+
+    def test_recommendation_rate_limit_is_shared_across_application_instances(self):
+        payload = {"description": "repair a fan"}
+        for _ in range(30):
+            self.assertEqual(self.client.post("/api/recommendations", json=payload).status_code, 200)
+
+        with TestClient(main.app) as another_instance:
+            for _ in range(30):
+                self.assertEqual(another_instance.post("/api/recommendations", json=payload).status_code, 200)
+            self.assertEqual(another_instance.post("/api/recommendations", json=payload).status_code, 429)
 
     def test_existing_request_flow_still_requires_consent_and_persists(self):
         denied = self.client.post("/api/requests", json={

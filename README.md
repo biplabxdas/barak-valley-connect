@@ -59,7 +59,7 @@ unrelated requests that should return no suggestions.
 
 ## Data and privacy
 
-The database contains `accounts`, `service_categories`, `providers`, and `service_requests`. Provider categories and customer requests link through database IDs. Existing SQLite and PostgreSQL provider/request tables are extended during startup so older databases keep their records.
+The database contains `accounts`, `service_categories`, `providers`, `service_requests`, and `rate_limit_buckets`. Provider categories and customer requests link through database IDs. Startup creates missing tables and applies the current additive column migrations; PostgreSQL startup workers serialize this step with a transaction-scoped advisory lock. Rate limits use an atomic database upsert, so limits are shared across workers and survive app restarts. Fixed windows can allow a short burst across a window boundary.
 
 Passwords are stored as PBKDF2 hashes. Public listings do not show provider phone numbers. The matching request is processed by this app, is not saved, and is not sent to an outside AI service. The privacy page explains which account and service-request details are stored and who can view them.
 
@@ -80,8 +80,10 @@ on providers maintaining useful descriptions and skills. Provider accounts are n
 email-verified, and the app does not include password recovery, payments, or
 automatic email/SMS notifications.
 
-Rate limits are held in process memory and reset on restart; a multi-worker public
-deployment should use a shared rate-limit store. The local verification used SQLite
-and an isolated test database. A live PostgreSQL connection, physical mobile device,
-and deployed Render service were not available for this check, so those environments
-remain unverified. The current changes are in draft PR #2 and have not been deployed.
+Rate-limit counters use an HMAC keyed by the session secret rather than storing raw
+IP addresses. Counters are removed within 24 hours. Use a stable, private session
+secret in production so rate limits remain consistent across app workers. The local
+verification uses SQLite and an isolated test database. A live PostgreSQL connection,
+physical mobile device, and deployed Render service were not available for this check,
+so those environments remain unverified. The current changes are in draft PR #2 and
+have not been deployed.

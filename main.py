@@ -35,13 +35,6 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 SITE_OPERATOR_NAME = os.getenv("SITE_OPERATOR_NAME", "Website owner (not set)")
 PRIVACY_CONTACT_EMAIL = os.getenv("PRIVACY_CONTACT_EMAIL", "privacy contact not set")
 REQUEST_RETENTION_DAYS = os.getenv("REQUEST_RETENTION_DAYS", "30")
-LOGIN_ATTEMPTS: dict[str, list[float]] = {}
-ACCOUNT_LOGIN_ATTEMPTS: dict[str, list[float]] = {}
-ACCOUNT_REGISTER_ATTEMPTS: dict[str, list[float]] = {}
-REQUEST_ATTEMPTS: dict[str, list[float]] = {}
-RECOMMENDATION_ATTEMPTS: dict[str, list[float]] = {}
-
-
 class Database:
     """Small adapter that lets the same beginner SQL work with SQLite and Postgres."""
 
@@ -91,7 +84,11 @@ def initialize_database() -> None:
     provider_ref = "BIGINT" if DATABASE_URL else "INTEGER"
     created_at = "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP" if DATABASE_URL else "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
     sample_type = "BOOLEAN NOT NULL DEFAULT FALSE" if DATABASE_URL else "INTEGER NOT NULL DEFAULT 0"
+    rate_window_type = "BIGINT" if DATABASE_URL else "INTEGER"
     with connect_db() as db:
+        if db.is_postgres:
+            # Keep concurrent web workers from racing the startup schema checks.
+            db.execute("SELECT pg_advisory_xact_lock(hashtext(?))", ("barak-valley-connect-schema",))
         db.execute(f"""CREATE TABLE IF NOT EXISTS accounts (
             id {provider_id}, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
             role TEXT NOT NULL CHECK(role IN ('customer', 'provider')),
@@ -112,6 +109,11 @@ def initialize_database() -> None:
             status TEXT NOT NULL DEFAULT 'Pending'
                 CHECK(status IN ('Pending', 'Accepted', 'Completed', 'Cancelled')),
             created_at {created_at})""")
+        db.execute(f"""CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+            bucket_key TEXT NOT NULL, action TEXT NOT NULL,
+            window_start {rate_window_type} NOT NULL, request_count INTEGER NOT NULL,
+            PRIMARY KEY (bucket_key, action, window_start))""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_window_start ON rate_limit_buckets(window_start)")
 
         # Add new nullable/profile fields safely to databases created by earlier versions.
         tables_and_columns = {
@@ -319,6 +321,29 @@ def cleanup_expired_requests(db: Database):
         )
 
 
+def enforce_rate_limit(request: Request, *, action: str, limit: int, window_seconds: int, detail: str):
+    """Atomically count a request in the configured database for cross-worker limits."""
+    client_ip = request.client.host if request.client else "unknown"
+    bucket_key = hmac.new(
+        SESSION_SECRET.encode("utf-8"), client_ip.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    now = int(time.time())
+    window_start = now - (now % window_seconds)
+    with connect_db() as db:
+        db.execute("DELETE FROM rate_limit_buckets WHERE window_start < ?", (now - 86400,))
+        row = db.execute(
+            """INSERT INTO rate_limit_buckets (bucket_key, action, window_start, request_count)
+               VALUES (?, ?, ?, 1)
+               ON CONFLICT(bucket_key, action, window_start)
+               DO UPDATE SET request_count = request_count + 1
+               RETURNING request_count""",
+            (bucket_key, action, window_start),
+        ).fetchone()
+        request_count = row["request_count"]
+    if request_count > limit:
+        raise HTTPException(status_code=429, detail=detail)
+
+
 @app.get("/health", include_in_schema=False)
 def health():
     with connect_db() as db:
@@ -367,17 +392,10 @@ def admin_session(request: Request):
 
 @app.post("/api/auth/admin-login")
 def admin_login(payload: AdminLogin, request: Request):
-    client_ip = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    attempts = [attempt for attempt in LOGIN_ATTEMPTS.get(client_ip, []) if now - attempt < 900]
-    LOGIN_ATTEMPTS[client_ip] = attempts
-    if len(attempts) >= 5:
-        raise HTTPException(status_code=429, detail="Too many attempts. Try again in 15 minutes.")
+    enforce_rate_limit(request, action="admin_login", limit=10, window_seconds=900,
+                       detail="Too many attempts. Try again in 15 minutes.")
     if not hmac.compare_digest(payload.password, ADMIN_PASSWORD):
-        attempts.append(now)
-        LOGIN_ATTEMPTS[client_ip] = attempts
         raise HTTPException(status_code=401, detail="That password did not match.")
-    LOGIN_ATTEMPTS.pop(client_ip, None)
     request.session.clear()
     request.session["is_admin"] = True
     return {"is_admin": True}
@@ -396,11 +414,8 @@ def register_account(payload: AccountRegistration, request: Request):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     if payload.role == "provider" and (not payload.category or not payload.area):
         raise HTTPException(status_code=422, detail="Provider accounts need a service category and area.")
-    client_ip = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    attempts = [attempt for attempt in ACCOUNT_REGISTER_ATTEMPTS.get(client_ip, []) if now - attempt < 3600]
-    if len(attempts) >= 5:
-        raise HTTPException(status_code=429, detail="Too many account registrations. Try again later.")
+    enforce_rate_limit(request, action="account_register", limit=5, window_seconds=3600,
+                       detail="Too many account registrations. Try again later.")
     with connect_db() as db:
         if db.execute("SELECT id FROM accounts WHERE email = ?", (email,)).fetchone():
             raise HTTPException(status_code=409, detail="An account with that email already exists.")
@@ -421,8 +436,6 @@ def register_account(payload: AccountRegistration, request: Request):
                  payload.description.strip(), payload.skills.strip(), account_id, category_id),
             )
         account = public_account(db.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone())
-    attempts.append(now)
-    ACCOUNT_REGISTER_ATTEMPTS[client_ip] = attempts
     request.session.clear()
     request.session["account_id"] = account_id
     return {"account": account}
@@ -431,18 +444,12 @@ def register_account(payload: AccountRegistration, request: Request):
 @app.post("/api/auth/login")
 def account_login(payload: AccountLogin, request: Request):
     email = payload.email.strip().lower()
-    client_ip = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    attempts = [attempt for attempt in ACCOUNT_LOGIN_ATTEMPTS.get(client_ip, []) if now - attempt < 900]
-    if len(attempts) >= 10:
-        raise HTTPException(status_code=429, detail="Too many sign-in attempts. Try again in 15 minutes.")
+    enforce_rate_limit(request, action="account_login", limit=10, window_seconds=900,
+                       detail="Too many sign-in attempts. Try again in 15 minutes.")
     with connect_db() as db:
         row = db.execute("SELECT * FROM accounts WHERE email = ?", (email,)).fetchone()
     if not row or not verify_password(payload.password, row["password_hash"]):
-        attempts.append(now)
-        ACCOUNT_LOGIN_ATTEMPTS[client_ip] = attempts
         raise HTTPException(status_code=401, detail="Email or password did not match.")
-    ACCOUNT_LOGIN_ATTEMPTS.pop(client_ip, None)
     request.session.clear()
     request.session["account_id"] = row["id"]
     return {"account": public_account(row)}
@@ -515,13 +522,8 @@ def get_provider(provider_id: int, request: Request):
 @app.post("/api/recommendations")
 def recommend_providers(payload: RecommendationInput, request: Request):
     """Rank current public listings against a short request using TF-IDF similarity."""
-    client_ip = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    attempts = [attempt for attempt in RECOMMENDATION_ATTEMPTS.get(client_ip, []) if now - attempt < 900]
-    if len(attempts) >= 60:
-        raise HTTPException(status_code=429, detail="Too many searches. Please try again in a few minutes.")
-    attempts.append(now)
-    RECOMMENDATION_ATTEMPTS[client_ip] = attempts
+    enforce_rate_limit(request, action="recommendations", limit=60, window_seconds=900,
+                       detail="Too many searches. Please try again in a few minutes.")
     with connect_db() as db:
         cleanup_expired_requests(db)
         rows = [dict(row) for row in db.execute(
@@ -611,11 +613,8 @@ def update_my_provider_profile(provider: ProviderInput, request: Request):
 def create_request(payload: RequestInput, request: Request):
     if not payload.privacy_consent:
         raise HTTPException(status_code=400, detail="Please agree to the privacy notice before sending a request.")
-    client_ip = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    attempts = [attempt for attempt in REQUEST_ATTEMPTS.get(client_ip, []) if now - attempt < 3600]
-    if len(attempts) >= 5:
-        raise HTTPException(status_code=429, detail="Too many requests from this connection. Please try again later.")
+    enforce_rate_limit(request, action="service_request", limit=5, window_seconds=3600,
+                       detail="Too many requests from this connection. Please try again later.")
     customer_id = None
     account_id = request.session.get("account_id")
     if account_id:
@@ -644,8 +643,6 @@ def create_request(payload: RequestInput, request: Request):
                VALUES (?, ?, ?, ?, ?)""",
             (customer_name, customer_phone, payload.service_id, payload.details, customer_id),
         )
-        attempts.append(now)
-        REQUEST_ATTEMPTS[client_ip] = attempts
         return {"message": "Your request was received. The website owner can review it in the management area."}
 
 
