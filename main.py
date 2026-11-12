@@ -398,3 +398,36 @@ def delete_request(request_id: int, _: None = Depends(require_admin)):
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Service request not found")
 
+
+
+# AI-assisted local service discovery
+class AIQuestion(BaseModel):
+    question: str = Field(min_length=5, max_length=1000)
+
+
+@app.post("/api/ai/ask")
+def ask_ai(payload: AIQuestion):
+    """Find real providers semantically, then generate a grounded answer with an LLM."""
+    from ai_assistant import answer_service_query
+
+    with connect_db() as db:
+        rows = db.execute(
+            "SELECT id, name, category, area FROM providers ORDER BY name"
+        ).fetchall()
+        providers = [dict(row) for row in rows]
+
+    if not providers:
+        return {
+            "answer": "There are no service providers listed yet. Please check again later.",
+            "matches": [],
+        }
+
+    try:
+        return answer_service_query(payload.question, providers)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail="The AI assistant is temporarily unavailable. Please try again.",
+        ) from error
