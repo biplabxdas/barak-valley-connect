@@ -1,79 +1,89 @@
 # Barak Valley Connect
 
-A public pilot website for discovering local service providers in Silchar, Assam.
+A local services directory for discovering service providers in Silchar, Assam, with an AI-assisted natural-language discovery feature.
 
-**Live website:** https://barak-valley-connect.onrender.com
+**Existing live website:** https://barak-valley-connect.onrender.com
 
-## What visitors can do
+## Features
 
-- Browse providers by service category and area.
-- Send a service request with their contact details and consent to follow-up.
-- Read the privacy notice.
+- Browse providers by category and area.
+- Submit customer service requests.
+- Owner-managed provider listings and request status.
+- AI-assisted natural-language service discovery.
+- Embedding-based semantic retrieval over provider records.
+- LLM-generated answers grounded in retrieved provider records.
+- Provider matches are returned separately from the generated explanation.
 
-## What the website owner can do
+## AI architecture
 
-- Sign in to add, edit, and remove business listings.
-- Review service requests and update their status.
-- Download a private CSV backup of requests.
+1. The browser sends a customer's natural-language question to `POST /api/ai/ask`.
+2. FastAPI loads provider names, categories and areas from the existing database.
+3. The AI module creates embeddings for the question and provider descriptions.
+4. Cosine similarity ranks the provider records and selects up to five candidates.
+5. The selected records are passed as context to an LLM.
+6. The LLM is instructed to answer only from the retrieved records and not invent businesses, phone numbers, prices or availability.
+7. FastAPI returns the answer and matching provider records to the browser.
 
-Provider phone numbers are visible only to the signed-in owner. Public visitors use the request form. Add a business only after its owner agrees to be listed.
+This is a small, request-time retrieval-augmented generation (RAG) implementation. Embeddings are generated on demand; this pilot does not yet persist vectors in a dedicated vector database. For a larger directory, add persistent vector storage, caching, evaluation and monitoring.
 
-## Built with
+## Technology
 
-- **Backend:** Python, FastAPI, REST API
+- **Backend:** Python, FastAPI
 - **Frontend:** HTML, CSS, vanilla JavaScript
-- **Database:** SQLite for local development; Supabase PostgreSQL for the hosted website
+- **Database:** SQLite locally; PostgreSQL on the hosted deployment
+- **AI:** OpenAI-compatible embeddings and chat-completions API
 - **Hosting:** Render
+
+## Configuration
+
+Set these environment variables in your local `.env` file or hosting provider:
+
+- `AI_API_KEY` — required API key; keep it secret.
+- `AI_API_BASE` — optional API base URL; defaults to `https://api.openai.com/v1`.
+- `AI_CHAT_MODEL` — optional chat model; defaults to `gpt-4o-mini`.
+- `AI_EMBEDDING_MODEL` — optional embedding model; defaults to `text-embedding-3-small`.
+
+Never commit `.env`, API keys, passwords or database files. The AI endpoint returns a clear service-unavailable response when the API key is not configured.
 
 ## Run locally on macOS
 
 1. Install Python 3.
-2. Open Terminal in the project folder.
-3. Create and activate a virtual environment:
-
+2. Create and activate a virtual environment:
    ```sh
    python3 -m venv .venv
    source .venv/bin/activate
    ```
-
-4. Install the dependencies:
-
+3. Install dependencies:
    ```sh
    python -m pip install -r requirements.txt
    ```
-
-5. Copy `.env.example` to `.env`. Set your own local `ADMIN_PASSWORD` and `SESSION_SECRET`.
-6. Start the site:
-
+4. Configure the existing database and owner settings using `.env.example`, and add `AI_API_KEY` if you want to test the AI assistant.
+5. Start the app:
    ```sh
    python -m uvicorn main:app --reload
    ```
+6. Open http://127.0.0.1:8000.
 
-7. Open http://127.0.0.1:8000. The local development database starts with sample providers; the live website starts empty.
-8. Stop the server with Control+C.
+## API
 
-Never upload `.env`, database files, or real passwords to GitHub.
+`POST /api/ai/ask`
 
-## How it works
+Request:
+```json
+{"question":"I need an electrician in Silchar to repair a ceiling fan"}
+```
 
-The page uses JavaScript to send requests to the FastAPI backend. FastAPI validates the submitted data and stores it in a database. Local development uses SQLite; the live service uses Supabase PostgreSQL. A customer request is linked to a provider by its database ID.
+Response includes an `answer` and a `matches` array containing provider IDs, names, categories, areas and similarity scores.
 
-## Project concepts
+## Current limitations
 
-- **REST API:** HTTP routes let the browser read, add, edit, and remove data.
-- **CRUD:** create, read, update, and delete operations for provider listings and service requests.
-- **Relational database:** provider and request records are stored in related tables.
-- **Validation:** Pydantic checks data before it is saved.
-- **Parameterized SQL:** database values are passed separately from SQL commands.
-- **Sessions:** the owner sign-in is maintained with a protected session cookie.
+- AI requests require a configured external API key and internet access.
+- Embeddings are calculated for all providers on each request; this is suitable for a small pilot, not a large directory.
+- The similarity score is a retrieval signal, not a probability or a guarantee of suitability.
+- The LLM can still make mistakes; verify provider details before acting.
+- Provider availability, pricing and service quality are not inferred.
+- No dedicated vector database, automated evaluation suite or user feedback loop is implemented yet.
 
-## Current scope
+## Learning goals
 
-This is an early pilot with one owner login. It does not have provider or customer accounts, online payments, or automatic email/SMS alerts. The owner checks requests manually. Free hosting may sleep when idle, and free database services have usage limits; this setup is suitable for a small pilot rather than a high-traffic production service.
-
-## CV summary
-
-**Barak Valley Connect** — Python, FastAPI, JavaScript, SQLite/PostgreSQL
-
-- Built a local service directory with category filtering, owner-managed provider listings, and customer service requests.
-- Implemented REST API routes, input validation, session-based owner access, and persistent database storage.
+This project is intended to demonstrate practical understanding of REST APIs, embeddings, cosine similarity, semantic retrieval, RAG, prompt constraints, database integration, secrets management and deployment.
