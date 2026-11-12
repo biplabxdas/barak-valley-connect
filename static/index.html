@@ -6,6 +6,7 @@
   <meta name="description" content="Find and request local services across the Barak Valley, based in Silchar, Assam, India.">
   <title>Barak Valley Connect — Local Services</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/ai-assistant.css">
   <link rel="stylesheet" href="/static/management.css">
 </head>
 <body>
@@ -80,8 +81,23 @@
       <button class="button button-dark submit-button" type="submit">Save listing <span>→</span></button>
     </form>
   </dialog>
+
+    <section class="ai-section" aria-labelledby="ai-heading">
+      <p class="eyebrow">SMART SERVICE DISCOVERY</p>
+      <h2 id="ai-heading">Tell us what you need</h2>
+      <p class="ai-intro">Describe the job in your own words. The assistant searches the listed providers and explains possible matches.</p>
+      <form id="ai-form" class="ai-form">
+        <label class="sr-only" for="ai-question">Describe the service you need</label>
+        <textarea id="ai-question" name="question" rows="3" minlength="5" maxlength="1000" required placeholder="For example: I need an electrician in Silchar to repair a ceiling fan."></textarea>
+        <button class="button button-dark" type="submit">Find matching services →</button>
+      </form>
+      <p id="ai-status" class="ai-status" role="status" aria-live="polite"></p>
+      <div id="ai-answer" class="ai-answer" hidden></div>
+      <div id="ai-matches" class="ai-matches"></div>
+    </section>
   <footer><span class="brand-mark">B</span><span>Barak Valley Connect · Silchar, Assam, India</span><a class="footer-note" href="/privacy">Privacy notice</a></footer>
   <script src="/static/app.js"></script>
+  <script src="/static/ai-assistant.js"></script>
 </body>
 </html>
 
