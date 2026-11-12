@@ -65,18 +65,18 @@ Passwords are stored as PBKDF2 hashes. Public listings do not show provider phon
 
 ## Deployment
 
-`render.yaml` configures the Python web service, start command, and database-backed `/health` check; it does not provision a PostgreSQL database. Create or select a PostgreSQL database first, then set its private connection URL as `DATABASE_URL` for the web service. Production startup rejects SQLite URLs and checks the database with `/health`.
+`render.yaml` defines both the Python web service and a PostgreSQL resource in Singapore. Its `DATABASE_URL` references the database's private connection string, and the database allowlist blocks external connections. The database is created only when you create or sync this Blueprint in Render; editing this file or pushing the branch does not provision it. Production startup rejects SQLite URLs and `/health` checks the database connection.
 
-For a Render launch, create a PostgreSQL database in the same region where possible, then create the web service from this repository and select `codex/final-barak-valley-connect` only after deciding to publish that branch. Confirm these environment variables in Render's private settings:
+For a Render launch, first review the PostgreSQL plan and billing shown in Render before syncing the Blueprint. The Blueprint currently omits a database plan, so Render applies its default plan for a new database. Confirm these environment variables in Render's private settings:
 
 - `APP_ENV=production`
-- `DATABASE_URL`: private PostgreSQL connection URL from the database provider
+- `DATABASE_URL`: automatically supplied from the Blueprint database resource; for an existing external database instead, change this to a private `sync: false` value and remove or reuse the declared database resource before syncing
 - `SESSION_SECRET`: at least 32 random characters; the blueprint requests a generated value
 - `ADMIN_PASSWORD`: at least 16 characters
 - `SITE_OPERATOR_NAME` and `PRIVACY_CONTACT_EMAIL`: real contact details for the privacy notice
 - `REQUEST_RETENTION_DAYS`: positive integer, such as `30`
 
-The service build command is `pip install -r requirements.txt`, the start command is `uvicorn main:app --host 0.0.0.0 --port $PORT`, and Render checks `/health`. After configuring credentials and publishing, verify `/health`, account registration/login, provider listing, matching, and request persistence against the selected database. Do not put database URLs or passwords in Git.
+The service build command is `pip install -r requirements.txt`, the start command is `uvicorn main:app --host 0.0.0.0 --port $PORT`, and Render checks `/health`. After configuring contacts and the owner password and approving the database plan, verify `/health`, account registration/login, provider listing, matching, and request persistence against PostgreSQL. Do not put database URLs or passwords in Git.
 
 The account and matching changes are on the `codex/final-barak-valley-connect` branch and in draft PR #2. They have not been merged or deployed. The existing live URL may still be running the previous version. PostgreSQL and Render deployment should be checked with the intended private connection settings before publishing.
 
