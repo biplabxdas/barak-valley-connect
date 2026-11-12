@@ -5,13 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Find and request local services across the Barak Valley, based in Silchar, Assam, India.">
   <title>Barak Valley Connect — Local Services</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/management.css">
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/" aria-label="Barak Valley Connect home"><span class="brand-mark">B</span> Barak Valley Connect</a>
-    <div class="header-actions"><span class="location">⌖ <span>Silchar, Assam, India</span></span><button id="admin-button" class="manage-button">Website owner sign in</button></div>
+    <div class="header-actions"><span class="location">⌖ <span>Silchar, Assam, India</span></span><button id="account-button" class="manage-button">Sign in / Create account</button><button id="admin-button" class="manage-button">Website owner sign in</button></div>
   </header>
   <main>
     <section class="hero">
@@ -21,11 +22,23 @@
       <div class="search-row">
         <label class="search-label" for="category-filter">I need help with</label>
         <select id="category-filter"><option value="">All services</option></select>
+        <input id="provider-search" type="search" placeholder="Search providers, skills, area" aria-label="Search providers, skills, or area">
         <button id="search-button" class="button button-dark">Find a local pro <span>→</span></button>
       </div>
       <p class="microcopy">Local service providers serving Silchar</p>
     </section>
     <p id="success-message" class="success-message" role="status" hidden></p>
+    <section class="match-section" aria-labelledby="match-title">
+      <div class="match-copy"><p class="eyebrow">NEED A HAND?</p><h2 id="match-title">Describe the job</h2>
+        <p>Tell us what you need in a sentence. We’ll compare it with the current listings and suggest a few local providers.</p></div>
+      <form id="match-form" class="match-form">
+        <label class="visually-hidden" for="match-description">Describe the service you need</label>
+        <textarea id="match-description" name="description" required minlength="3" maxlength="300" rows="2" placeholder="For example: I need help fixing a leaking kitchen tap"></textarea>
+        <button id="match-button" class="button button-dark" type="submit">Find a match <span>→</span></button>
+      </form>
+      <p class="match-note">Suggestions are based on words in your request and provider listings. They are not endorsements. Don’t include contact or sensitive details.</p>
+      <div id="match-results" class="match-results" aria-live="polite"></div>
+    </section>
     <section class="section-heading">
       <div><p class="eyebrow">BARAK VALLEY SERVICES</p><h2>People who can help</h2></div>
       <span id="provider-count" class="count"></span>
@@ -58,6 +71,36 @@
       <button class="button button-dark submit-button" type="submit">Send request <span>→</span></button>
     </form>
   </dialog>
+  <dialog id="account-dialog">
+    <section class="request-form account-panel">
+      <button type="button" id="close-account-dialog" class="close-button" aria-label="Close">×</button>
+      <p class="eyebrow">YOUR ACCOUNT</p><h2 id="account-title">Sign in</h2>
+      <form id="account-form">
+        <div class="account-mode"><button type="button" id="account-login-mode" class="manage-button">Sign in</button><button type="button" id="account-register-mode" class="manage-button">Create account</button></div>
+        <label>Email<input name="email" type="email" required maxlength="254" autocomplete="email"></label>
+        <label>Password<input name="password" type="password" required minlength="10" maxlength="128" autocomplete="current-password"></label>
+        <div id="account-register-fields" hidden>
+          <label>I am a<select name="role"><option value="customer">Customer</option><option value="provider">Service provider</option></select></label>
+          <label>Your name<input name="display_name" minlength="2" maxlength="80"></label>
+          <label>Phone number<input name="phone" minlength="7" maxlength="20"></label>
+          <div id="provider-register-fields" hidden>
+            <label>Service category<input name="category" minlength="2" maxlength="50" placeholder="e.g. Plumbing"></label>
+            <label>Area served<input name="area" minlength="2" maxlength="80" placeholder="e.g. Silchar"></label>
+            <label>About your service<textarea name="description" maxlength="1000" rows="3"></textarea></label>
+            <label>Skills or services<input name="skills" maxlength="500" placeholder="e.g. tap repair, pipe fitting"></label>
+          </div>
+        </div>
+        <p id="account-message" class="form-message" role="status"></p>
+        <button id="account-submit" class="button button-dark submit-button" type="submit">Sign in</button>
+      </form>
+      <div id="account-dashboard" hidden>
+        <p id="account-welcome" class="selected-provider"></p>
+        <div id="account-actions" class="account-actions"></div>
+        <div id="account-details" class="account-details"></div>
+        <button type="button" id="account-logout" class="manage-button">Sign out</button>
+      </div>
+    </section>
+  </dialog>
   <dialog id="admin-login-dialog">
     <form id="admin-login-form" class="request-form">
       <button type="button" id="close-admin-dialog" class="close-button" aria-label="Close">×</button>
@@ -76,6 +119,8 @@
       <label>Service category<input name="category" required minlength="2" maxlength="50" placeholder="e.g. Plumbing"></label>
       <label>Area served<input name="area" required minlength="2" maxlength="80" placeholder="e.g. Silchar"></label>
       <label>Contact phone<input name="phone" required minlength="7" maxlength="20" placeholder="Business contact number"></label>
+      <label>About this service<textarea name="description" maxlength="1000" rows="3"></textarea></label>
+      <label>Skills or services<input name="skills" maxlength="500" placeholder="e.g. tap repair, pipe fitting"></label>
       <p id="provider-form-message" class="form-message" role="status"></p>
       <button class="button button-dark submit-button" type="submit">Save listing <span>→</span></button>
     </form>

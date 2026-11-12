@@ -9,16 +9,20 @@ import time
 from html import escape
 from io import StringIO
 import csv
+import hashlib
+import secrets
+import re
 import psycopg
 from psycopg.rows import dict_row
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 from starlette.middleware.sessions import SessionMiddleware
 from dotenv import load_dotenv
+from matcher import rank_providers
 
 
 ROOT = Path(__file__).parent
@@ -32,7 +36,10 @@ SITE_OPERATOR_NAME = os.getenv("SITE_OPERATOR_NAME", "Website owner (not set)")
 PRIVACY_CONTACT_EMAIL = os.getenv("PRIVACY_CONTACT_EMAIL", "privacy contact not set")
 REQUEST_RETENTION_DAYS = os.getenv("REQUEST_RETENTION_DAYS", "30")
 LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+ACCOUNT_LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+ACCOUNT_REGISTER_ATTEMPTS: dict[str, list[float]] = {}
 REQUEST_ATTEMPTS: dict[str, list[float]] = {}
+RECOMMENDATION_ATTEMPTS: dict[str, list[float]] = {}
 
 
 class Database:
@@ -83,26 +90,80 @@ def initialize_database() -> None:
     request_id = "BIGSERIAL PRIMARY KEY" if DATABASE_URL else "INTEGER PRIMARY KEY AUTOINCREMENT"
     provider_ref = "BIGINT" if DATABASE_URL else "INTEGER"
     created_at = "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP" if DATABASE_URL else "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+    sample_type = "BOOLEAN NOT NULL DEFAULT FALSE" if DATABASE_URL else "INTEGER NOT NULL DEFAULT 0"
     with connect_db() as db:
+        db.execute(f"""CREATE TABLE IF NOT EXISTS accounts (
+            id {provider_id}, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('customer', 'provider')),
+            display_name TEXT NOT NULL, phone TEXT NOT NULL, created_at {created_at})""")
+        db.execute(f"""CREATE TABLE IF NOT EXISTS service_categories (
+            id {provider_id}, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '')""")
         db.execute(f"""CREATE TABLE IF NOT EXISTS providers (
             id {provider_id}, name TEXT NOT NULL, category TEXT NOT NULL,
-            area TEXT NOT NULL, phone TEXT NOT NULL)""")
+            area TEXT NOT NULL, phone TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '', skills TEXT NOT NULL DEFAULT '',
+            account_id {provider_ref} REFERENCES accounts(id),
+            category_id {provider_ref} REFERENCES service_categories(id),
+            is_sample {sample_type})""")
         db.execute(f"""CREATE TABLE IF NOT EXISTS service_requests (
             id {request_id}, customer_name TEXT NOT NULL, customer_phone TEXT NOT NULL,
             service_id {provider_ref} NOT NULL REFERENCES providers(id), details TEXT NOT NULL,
+            customer_id {provider_ref} REFERENCES accounts(id),
             status TEXT NOT NULL DEFAULT 'Pending'
                 CHECK(status IN ('Pending', 'Accepted', 'Completed', 'Cancelled')),
             created_at {created_at})""")
+
+        # Add new nullable/profile fields safely to databases created by earlier versions.
+        tables_and_columns = {
+            "providers": {
+                "description": "TEXT NOT NULL DEFAULT ''",
+                "skills": "TEXT NOT NULL DEFAULT ''",
+                "account_id": f"{provider_ref} REFERENCES accounts(id)",
+                "category_id": f"{provider_ref} REFERENCES service_categories(id)",
+                "is_sample": sample_type,
+            },
+            "service_requests": {
+                "customer_id": f"{provider_ref} REFERENCES accounts(id)",
+            },
+        }
+        for table, columns in tables_and_columns.items():
+            if db.is_postgres:
+                existing = {row["column_name"] for row in db.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = ?", (table,)
+                ).fetchall()}
+            else:
+                existing = {row["name"] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+            for column, definition in columns.items():
+                if column not in existing:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+        existing_categories = db.execute("SELECT DISTINCT category FROM providers").fetchall()
+        for category_row in existing_categories:
+            category_name = category_row["category"].strip()
+            if not category_name:
+                continue
+            db.execute("INSERT INTO service_categories (name) VALUES (?) ON CONFLICT(name) DO NOTHING", (category_name,))
+            category_id = db.execute("SELECT id FROM service_categories WHERE name = ?", (category_name,)).fetchone()["id"]
+            db.execute("UPDATE providers SET category_id = ? WHERE category = ? AND category_id IS NULL", (category_id, category_name))
         count = db.execute("SELECT COUNT(*) AS total FROM providers").fetchone()["total"]
         if count == 0 and APP_ENV != "production" and not DATABASE_URL:
             db.executemany(
-                "INSERT INTO providers (name, category, area, phone) VALUES (?, ?, ?, ?)",
+                "INSERT INTO providers (name, category, area, phone, is_sample) VALUES (?, ?, ?, ?, ?)",
                 [
-                    ("Riya's Home Repair", "Home repair", "Silchar", "9876500001"),
-                    ("Green Leaf Garden Care", "Gardening", "Silchar", "9876500002"),
-                    ("QuickFix Electricals", "Electrical", "Silchar", "9876500003"),
+                    ("Riya's Home Repair", "Home repair", "Silchar", "9876500001", True),
+                    ("Green Leaf Garden Care", "Gardening", "Silchar", "9876500002", True),
+                    ("QuickFix Electricals", "Electrical", "Silchar", "9876500003", True),
                 ],
             )
+        # Seeded demo providers are inserted after the first migration pass.
+        for category_row in db.execute("SELECT DISTINCT category FROM providers").fetchall():
+            category_name = category_row["category"].strip()
+            if category_name:
+                category_id = ensure_category(db, category_name)
+                db.execute(
+                    "UPDATE providers SET category_id = ? WHERE category = ? AND category_id IS NULL",
+                    (category_id, category_name),
+                )
 
 
 @asynccontextmanager
@@ -140,14 +201,37 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
-class ProviderInput(BaseModel):
+class AppModel(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
+class ProviderInput(AppModel):
     name: str = Field(min_length=2, max_length=80)
     category: str = Field(min_length=2, max_length=50)
     area: str = Field(min_length=2, max_length=80)
     phone: str = Field(min_length=7, max_length=20)
+    description: str = Field(default="", max_length=1000)
+    skills: str = Field(default="", max_length=500)
 
 
-class RequestInput(BaseModel):
+class AccountRegistration(AppModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=10, max_length=128)
+    role: Literal["customer", "provider"]
+    display_name: str = Field(min_length=2, max_length=80)
+    phone: str = Field(min_length=7, max_length=20)
+    category: str | None = Field(default=None, min_length=2, max_length=50)
+    area: str | None = Field(default=None, min_length=2, max_length=80)
+    description: str = Field(default="", max_length=1000)
+    skills: str = Field(default="", max_length=500)
+
+
+class AccountLogin(AppModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class RequestInput(AppModel):
     customer_name: str = Field(min_length=2, max_length=80)
     customer_phone: str = Field(min_length=7, max_length=20)
     service_id: int = Field(gt=0)
@@ -155,17 +239,58 @@ class RequestInput(BaseModel):
     privacy_consent: bool = False
 
 
-class StatusInput(BaseModel):
+class StatusInput(AppModel):
     status: Literal["Pending", "Accepted", "Completed", "Cancelled"]
 
 
-class AdminLogin(BaseModel):
+class AdminLogin(AppModel):
     password: str = Field(min_length=1, max_length=256)
+
+
+class RecommendationInput(AppModel):
+    description: str = Field(min_length=3, max_length=300)
 
 
 def require_admin(request: Request):
     if not request.session.get("is_admin"):
         raise HTTPException(status_code=401, detail="Please sign in as the website owner.")
+
+
+def hash_password(password: str, salt: bytes | None = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 260_000)
+    return f"{salt.hex()}:{digest.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt_hex, digest_hex = stored_hash.split(":", 1)
+        expected = bytes.fromhex(digest_hex)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), 260_000)
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
+
+
+def public_account(row) -> dict:
+    return {"id": row["id"], "email": row["email"], "role": row["role"],
+            "display_name": row["display_name"], "phone": row["phone"]}
+
+
+def require_account(request: Request, roles: tuple[str, ...] = ("customer", "provider")):
+    account_id = request.session.get("account_id")
+    if not account_id:
+        raise HTTPException(status_code=401, detail="Please sign in to continue.")
+    with connect_db() as db:
+        row = db.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+    if not row or row["role"] not in roles:
+        raise HTTPException(status_code=403, detail="Your account does not have access to this page.")
+    return dict(row)
+
+
+def ensure_category(db: Database, category_name: str) -> int:
+    db.execute("INSERT INTO service_categories (name) VALUES (?) ON CONFLICT(name) DO NOTHING", (category_name,))
+    return db.execute("SELECT id FROM service_categories WHERE name = ?", (category_name,)).fetchone()["id"]
 
 
 def cleanup_expired_requests(db: Database):
@@ -195,6 +320,11 @@ def home():
     return FileResponse(ROOT / "static" / "index.html")
 
 
+@app.get("/providers/{provider_id}", include_in_schema=False)
+def provider_profile_page(provider_id: int):
+    return FileResponse(ROOT / "static" / "provider.html")
+
+
 @app.get("/privacy", include_in_schema=False)
 def privacy_notice():
     from fastapi.responses import HTMLResponse
@@ -212,7 +342,16 @@ def privacy_notice():
 
 @app.get("/api/auth/me")
 def admin_session(request: Request):
-    return {"is_admin": bool(request.session.get("is_admin"))}
+    account_id = request.session.get("account_id")
+    account = None
+    if account_id:
+        with connect_db() as db:
+            row = db.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+            if row:
+                account = public_account(row)
+            else:
+                request.session.clear()
+    return {"is_admin": bool(request.session.get("is_admin")), "account": account}
 
 
 @app.post("/api/auth/admin-login")
@@ -239,9 +378,81 @@ def admin_logout(request: Request):
     return {"is_admin": False}
 
 
+@app.post("/api/auth/register", status_code=201)
+def register_account(payload: AccountRegistration, request: Request):
+    email = payload.email.strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(status_code=422, detail="Enter a valid email address.")
+    if payload.role == "provider" and (not payload.category or not payload.area):
+        raise HTTPException(status_code=422, detail="Provider accounts need a service category and area.")
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    attempts = [attempt for attempt in ACCOUNT_REGISTER_ATTEMPTS.get(client_ip, []) if now - attempt < 3600]
+    if len(attempts) >= 5:
+        raise HTTPException(status_code=429, detail="Too many account registrations. Try again later.")
+    with connect_db() as db:
+        if db.execute("SELECT id FROM accounts WHERE email = ?", (email,)).fetchone():
+            raise HTTPException(status_code=409, detail="An account with that email already exists.")
+        cursor = db.execute(
+            "INSERT INTO accounts (email, password_hash, role, display_name, phone) VALUES (?, ?, ?, ?, ?) RETURNING id",
+            (email, hash_password(payload.password), payload.role, payload.display_name.strip(), payload.phone.strip()),
+        )
+        account_id = cursor.fetchone()["id"]
+        if payload.role == "provider":
+            category = payload.category.strip()
+            db.execute("INSERT INTO service_categories (name) VALUES (?) ON CONFLICT(name) DO NOTHING", (category,))
+            category_id = db.execute("SELECT id FROM service_categories WHERE name = ?", (category,)).fetchone()["id"]
+            db.execute(
+                """INSERT INTO providers
+                   (name, category, area, phone, description, skills, account_id, category_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (payload.display_name.strip(), category, payload.area.strip(), payload.phone.strip(),
+                 payload.description.strip(), payload.skills.strip(), account_id, category_id),
+            )
+        account = public_account(db.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone())
+    attempts.append(now)
+    ACCOUNT_REGISTER_ATTEMPTS[client_ip] = attempts
+    request.session.clear()
+    request.session["account_id"] = account_id
+    request.session["account_role"] = payload.role
+    return {"account": account}
+
+
+@app.post("/api/auth/login")
+def account_login(payload: AccountLogin, request: Request):
+    email = payload.email.strip().lower()
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    attempts = [attempt for attempt in ACCOUNT_LOGIN_ATTEMPTS.get(client_ip, []) if now - attempt < 900]
+    if len(attempts) >= 10:
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts. Try again in 15 minutes.")
+    with connect_db() as db:
+        row = db.execute("SELECT * FROM accounts WHERE email = ?", (email,)).fetchone()
+    if not row or not verify_password(payload.password, row["password_hash"]):
+        attempts.append(now)
+        ACCOUNT_LOGIN_ATTEMPTS[client_ip] = attempts
+        raise HTTPException(status_code=401, detail="Email or password did not match.")
+    ACCOUNT_LOGIN_ATTEMPTS.pop(client_ip, None)
+    request.session.clear()
+    request.session["account_id"] = row["id"]
+    request.session["account_role"] = row["role"]
+    return {"account": public_account(row)}
+
+
+@app.post("/api/auth/logout")
+def account_logout(request: Request):
+    request.session.clear()
+    return {"account": None, "is_admin": False}
+
+
 @app.get("/api/providers")
-def list_providers(request: Request, category: str | None = None, area: str | None = None):
-    """List providers, with optional exact category and area filters."""
+def list_providers(
+    request: Request,
+    category: str | None = None,
+    area: str | None = None,
+    q: str | None = Query(default=None, max_length=120),
+):
+    """List providers with category, area, and text filters."""
     query = "SELECT * FROM providers WHERE 1=1"
     values: list[str] = []
     if category:
@@ -250,21 +461,82 @@ def list_providers(request: Request, category: str | None = None, area: str | No
     if area:
         query += " AND area = ?"
         values.append(area)
+    if q:
+        searchable_text = "LOWER(name || ' ' || category || ' ' || area || ' ' || description || ' ' || skills)"
+        for term in q.strip().lower().split()[:8]:
+            query += f" AND {searchable_text} LIKE ?"
+            values.append(f"%{term}%")
     query += " ORDER BY name"
     with connect_db() as db:
         cleanup_expired_requests(db)
         rows = [dict(row) for row in db.execute(query, values).fetchall()]
-        if request and not request.session.get("is_admin"):
-            return [{key: value for key, value in row.items() if key != "phone"} for row in rows]
-        return rows
+        is_owner = bool(request.session.get("is_admin"))
+        return [provider_response(row, include_phone=is_owner) for row in rows]
+
+
+def provider_response(row: dict, include_phone: bool = False) -> dict:
+    fields = ["id", "name", "category", "area", "description", "skills", "category_id", "is_sample"]
+    if include_phone:
+        fields.append("phone")
+    return {field: row[field] for field in fields if field in row}
+
+
+@app.get("/api/categories")
+def list_categories():
+    with connect_db() as db:
+        rows = db.execute(
+            """SELECT DISTINCT c.id, c.name, c.description
+               FROM service_categories c JOIN providers p ON p.category_id = c.id
+               ORDER BY c.name"""
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+@app.get("/api/providers/{provider_id}")
+def get_provider(provider_id: int, request: Request):
+    with connect_db() as db:
+        row = db.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Provider not found.")
+        account_id = request.session.get("account_id")
+        can_view_phone = bool(request.session.get("is_admin")) or bool(account_id and account_id == row["account_id"])
+        return provider_response(dict(row), include_phone=can_view_phone)
+
+
+@app.post("/api/recommendations")
+def recommend_providers(payload: RecommendationInput, request: Request):
+    """Rank current public listings against a short request using TF-IDF similarity."""
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    attempts = [attempt for attempt in RECOMMENDATION_ATTEMPTS.get(client_ip, []) if now - attempt < 900]
+    if len(attempts) >= 60:
+        raise HTTPException(status_code=429, detail="Too many searches. Please try again in a few minutes.")
+    attempts.append(now)
+    RECOMMENDATION_ATTEMPTS[client_ip] = attempts
+    with connect_db() as db:
+        cleanup_expired_requests(db)
+        rows = [dict(row) for row in db.execute(
+            "SELECT id, name, category, area, description, skills FROM providers ORDER BY name"
+        ).fetchall()]
+
+    if not rows:
+        return {"matches": [], "message": "There are no provider listings to match yet."}
+
+    matches = rank_providers(payload.description, rows)
+    message = "These listings share words with your request. Check the details before contacting a provider." if matches else "I couldn't find a close match in the current listings. Try another description or browse all services."
+    return {"matches": matches, "message": message}
 
 
 @app.post("/api/providers", status_code=201)
 def create_provider(provider: ProviderInput, _: None = Depends(require_admin)):
     with connect_db() as db:
+        category_id = ensure_category(db, provider.category.strip())
         cursor = db.execute(
-            "INSERT INTO providers (name, category, area, phone) VALUES (?, ?, ?, ?) RETURNING id",
-            (provider.name, provider.category, provider.area, provider.phone),
+            """INSERT INTO providers
+               (name, category, area, phone, description, skills, category_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+            (provider.name.strip(), provider.category.strip(), provider.area.strip(), provider.phone.strip(),
+             provider.description.strip(), provider.skills.strip(), category_id),
         )
         provider_id = cursor.fetchone()["id"]
         return dict(db.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone())
@@ -273,9 +545,12 @@ def create_provider(provider: ProviderInput, _: None = Depends(require_admin)):
 @app.put("/api/providers/{provider_id}")
 def update_provider(provider_id: int, provider: ProviderInput, _: None = Depends(require_admin)):
     with connect_db() as db:
+        category_id = ensure_category(db, provider.category.strip())
         cursor = db.execute(
-            "UPDATE providers SET name = ?, category = ?, area = ?, phone = ? WHERE id = ?",
-            (provider.name, provider.category, provider.area, provider.phone, provider_id),
+            """UPDATE providers SET name = ?, category = ?, area = ?, phone = ?,
+               description = ?, skills = ?, category_id = ? WHERE id = ?""",
+            (provider.name.strip(), provider.category.strip(), provider.area.strip(), provider.phone.strip(),
+             provider.description.strip(), provider.skills.strip(), category_id, provider_id),
         )
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Provider not found")
@@ -296,6 +571,33 @@ def delete_provider(provider_id: int, _: None = Depends(require_admin)):
             raise HTTPException(status_code=404, detail="Provider not found")
 
 
+@app.get("/api/provider/profile")
+def get_my_provider_profile(request: Request):
+    account = require_account(request, ("provider",))
+    with connect_db() as db:
+        row = db.execute("SELECT * FROM providers WHERE account_id = ?", (account["id"],)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Provider profile not found.")
+        return provider_response(dict(row), include_phone=True)
+
+
+@app.put("/api/provider/profile")
+def update_my_provider_profile(provider: ProviderInput, request: Request):
+    account = require_account(request, ("provider",))
+    with connect_db() as db:
+        existing = db.execute("SELECT id FROM providers WHERE account_id = ?", (account["id"],)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Provider profile not found.")
+        category_id = ensure_category(db, provider.category.strip())
+        db.execute(
+            """UPDATE providers SET name = ?, category = ?, area = ?, phone = ?,
+               description = ?, skills = ?, category_id = ? WHERE id = ?""",
+            (provider.name.strip(), provider.category.strip(), provider.area.strip(), provider.phone.strip(),
+             provider.description.strip(), provider.skills.strip(), category_id, existing["id"]),
+        )
+        return provider_response(dict(db.execute("SELECT * FROM providers WHERE id = ?", (existing["id"],)).fetchone()), include_phone=True)
+
+
 @app.post("/api/requests", status_code=201)
 def create_request(payload: RequestInput, request: Request):
     if not payload.privacy_consent:
@@ -305,6 +607,23 @@ def create_request(payload: RequestInput, request: Request):
     attempts = [attempt for attempt in REQUEST_ATTEMPTS.get(client_ip, []) if now - attempt < 3600]
     if len(attempts) >= 5:
         raise HTTPException(status_code=429, detail="Too many requests from this connection. Please try again later.")
+    customer_id = None
+    account_id = request.session.get("account_id")
+    if account_id:
+        with connect_db() as db:
+            account = db.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        if not account:
+            raise HTTPException(status_code=401, detail="Please sign in again before submitting your request.")
+        if account["role"] == "customer":
+            customer_id = account["id"]
+            customer_name = account["display_name"]
+            customer_phone = account["phone"]
+        else:
+            customer_name = payload.customer_name
+            customer_phone = payload.customer_phone
+    else:
+        customer_name = payload.customer_name
+        customer_phone = payload.customer_phone
     with connect_db() as db:
         cleanup_expired_requests(db)
         provider = db.execute("SELECT id FROM providers WHERE id = ?", (payload.service_id,)).fetchone()
@@ -312,13 +631,42 @@ def create_request(payload: RequestInput, request: Request):
             raise HTTPException(status_code=404, detail="Provider not found")
         db.execute(
             """INSERT INTO service_requests
-               (customer_name, customer_phone, service_id, details)
-               VALUES (?, ?, ?, ?)""",
-            (payload.customer_name, payload.customer_phone, payload.service_id, payload.details),
+               (customer_name, customer_phone, service_id, details, customer_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            (customer_name, customer_phone, payload.service_id, payload.details, customer_id),
         )
         attempts.append(now)
         REQUEST_ATTEMPTS[client_ip] = attempts
         return {"message": "Your request was received. The website owner can review it in the management area."}
+
+
+@app.get("/api/my/requests")
+def list_my_requests(request: Request):
+    account = require_account(request, ("customer",))
+    with connect_db() as db:
+        rows = db.execute(
+            """SELECT r.id, r.details, r.status, r.created_at,
+                      p.name AS provider_name, p.category, p.area
+               FROM service_requests r JOIN providers p ON p.id = r.service_id
+               WHERE r.customer_id = ? ORDER BY r.created_at DESC, r.id DESC""",
+            (account["id"],),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+@app.get("/api/provider/requests")
+def list_provider_requests(request: Request):
+    account = require_account(request, ("provider",))
+    with connect_db() as db:
+        provider = db.execute("SELECT id FROM providers WHERE account_id = ?", (account["id"],)).fetchone()
+        if not provider:
+            raise HTTPException(status_code=404, detail="Provider profile not found.")
+        rows = db.execute(
+            """SELECT id, customer_name, customer_phone, details, status, created_at
+               FROM service_requests WHERE service_id = ? ORDER BY created_at DESC, id DESC""",
+            (provider["id"],),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 @app.get("/api/requests")
