@@ -29,6 +29,7 @@ databases:
   - name: barak-valley-connect-postgres
     databaseName: barak_valley_connect
     user: barak_valley_connect
+    # The free plan avoids charges but expires after 30 days. Use a paid plan for durable production data.
+    plan: free
     region: singapore
     ipAllowList: []
-
