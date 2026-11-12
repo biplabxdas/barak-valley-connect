@@ -51,6 +51,7 @@ class ApiIntegrationTests(unittest.TestCase):
         home = self.client.get("/")
         privacy = self.client.get("/privacy")
         favicon = self.client.get("/static/favicon.svg")
+        health = self.client.get("/health")
         self.assertEqual(home.status_code, 200)
         self.assertIn("/static/favicon.svg", home.text)
         self.assertEqual(favicon.status_code, 200)
@@ -58,6 +59,8 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertIn('id="match-form"', home.text)
         self.assertEqual(privacy.status_code, 200)
         self.assertIn("does not save that description", privacy.text)
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json(), {"status": "ok"})
 
     def test_production_requires_a_long_session_secret(self):
         valid_settings = {
