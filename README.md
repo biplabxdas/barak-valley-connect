@@ -65,7 +65,18 @@ Passwords are stored as PBKDF2 hashes. Public listings do not show provider phon
 
 ## Deployment
 
-`render.yaml` configures the Render web service. Production requires `DATABASE_URL`, `SESSION_SECRET`, `ADMIN_PASSWORD` (at least 16 characters), `SITE_OPERATOR_NAME`, `PRIVACY_CONTACT_EMAIL`, and `REQUEST_RETENTION_DAYS` (a positive number). Keep secrets in Render's private environment settings, not in this repository.
+`render.yaml` configures the Python web service, start command, and database-backed `/health` check; it does not provision a PostgreSQL database. Create or select a PostgreSQL database first, then set its private connection URL as `DATABASE_URL` for the web service. Production startup rejects SQLite URLs and checks the database with `/health`.
+
+For a Render launch, create a PostgreSQL database in the same region where possible, then create the web service from this repository and select `codex/final-barak-valley-connect` only after deciding to publish that branch. Confirm these environment variables in Render's private settings:
+
+- `APP_ENV=production`
+- `DATABASE_URL`: private PostgreSQL connection URL from the database provider
+- `SESSION_SECRET`: at least 32 random characters; the blueprint requests a generated value
+- `ADMIN_PASSWORD`: at least 16 characters
+- `SITE_OPERATOR_NAME` and `PRIVACY_CONTACT_EMAIL`: real contact details for the privacy notice
+- `REQUEST_RETENTION_DAYS`: positive integer, such as `30`
+
+The service build command is `pip install -r requirements.txt`, the start command is `uvicorn main:app --host 0.0.0.0 --port $PORT`, and Render checks `/health`. After configuring credentials and publishing, verify `/health`, account registration/login, provider listing, matching, and request persistence against the selected database. Do not put database URLs or passwords in Git.
 
 The account and matching changes are on the `codex/final-barak-valley-connect` branch and in draft PR #2. They have not been merged or deployed. The existing live URL may still be running the previous version. PostgreSQL and Render deployment should be checked with the intended private connection settings before publishing.
 
@@ -87,3 +98,7 @@ verification uses SQLite and an isolated test database. A live PostgreSQL connec
 physical mobile device, and deployed Render service were not available for this check,
 so those environments remain unverified. The current changes are in draft PR #2 and
 have not been deployed.
+
+Schema creation and additive upgrades currently run at startup; they are not tracked
+by a versioned migration tool and do not provide automatic rollback. Back up an
+existing database before production upgrades and review schema changes before release.
