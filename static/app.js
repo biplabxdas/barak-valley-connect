@@ -16,7 +16,11 @@ async function api(path, options = {}) {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   });
-  const data = response.status === 204 ? null : await response.json();
+  let data = null;
+  if (response.status !== 204) {
+    const contentType = response.headers.get('content-type') || '';
+    data = contentType.includes('application/json') ? await response.json() : null;
+  }
   if (!response.ok) {
     const detail = data?.detail;
     const message = Array.isArray(detail)
@@ -73,6 +77,11 @@ async function loadProviders() {
     button.addEventListener('click', () => removeProvider(Number(button.dataset.providerId)));
   });
   if (isAdmin) await loadSummary();
+}
+
+function showProviderLoadError(error) {
+  providerList.innerHTML = `<div class="empty-state" role="status">Could not load providers: ${safeText(error.message)}</div>`;
+  document.querySelector('#provider-count').textContent = '';
 }
 
 async function loadSummary() {
@@ -187,11 +196,11 @@ document.querySelector('#match-form').addEventListener('submit', async (event) =
   } finally { button.disabled = false; }
 });
 
-filter.addEventListener('change', loadProviders);
-document.querySelector('#search-button').addEventListener('click', loadProviders);
+filter.addEventListener('change', () => loadProviders().catch(showProviderLoadError));
+document.querySelector('#search-button').addEventListener('click', () => loadProviders().catch(showProviderLoadError));
 document.querySelector('#provider-search').addEventListener('input', () => {
   window.clearTimeout(window.providerSearchTimer);
-  window.providerSearchTimer = window.setTimeout(loadProviders, 220);
+  window.providerSearchTimer = window.setTimeout(() => loadProviders().catch(showProviderLoadError), 220);
 });
 document.querySelector('#close-dialog').addEventListener('click', () => dialog.close());
 document.querySelector('#add-provider-button').addEventListener('click', () => openProviderEditor());
@@ -265,12 +274,16 @@ function showAccountDashboard() {
   document.querySelector('#account-button').textContent = currentAccount
     ? `${currentAccount.display_name} · Account` : 'Sign in / Create account';
   const actions = document.querySelector('#account-actions');
-  if (!currentAccount) return;
+  const details = document.querySelector('#account-details');
+  if (!currentAccount) {
+    actions.innerHTML = '';
+    details.innerHTML = '';
+    return;
+  }
   const primaryAction = currentAccount.role === 'customer'
     ? '<button type="button" class="manage-button" id="my-requests-button">My requests</button>'
     : '<button type="button" class="manage-button" id="provider-profile-button">Edit my listing</button><button type="button" class="manage-button" id="provider-requests-button">Requests for my services</button>';
   actions.innerHTML = primaryAction;
-  const details = document.querySelector('#account-details');
   details.innerHTML = '';
   const requestsButton = document.querySelector('#my-requests-button') || document.querySelector('#provider-requests-button');
   requestsButton?.addEventListener('click', loadAccountRequests);
@@ -287,6 +300,7 @@ async function loadAccountRequests() {
     details.innerHTML = requests.map((request) => `
       <article class="account-request"><strong>${safeText(currentAccount.role === 'customer' ? request.provider_name : request.customer_name)}</strong>
         <span class="status ${safeText(request.status)}">${safeText(request.status)}</span>
+        ${currentAccount.role === 'provider' ? `<p>Customer contact: ${safeText(request.customer_phone)}</p>` : ''}
         <p>${safeText(request.details)}</p></article>`).join('');
   } catch (error) { details.textContent = error.message; }
 }

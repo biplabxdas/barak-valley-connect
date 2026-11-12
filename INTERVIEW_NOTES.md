@@ -17,11 +17,11 @@ The browser sends a short description to `POST /api/recommendations`. The backen
 
 The matcher lowercases and tokenizes text, removes common words, and expands a small set of category vocabulary. It calculates TF-IDF weights and cosine similarity. For each listing, term frequency is `1 + ln(count)`; inverse document frequency is `ln((N + 1) / (df + 1)) + 1`. It ranks matches above a threshold, returns up to three, and includes matching words. The interface displays the cosine score as a percentage but labels it as text similarity, not a probability.
 
-This is an explainable information-retrieval baseline. It is not a trained predictive model or generative AI. It can miss unlisted synonyms, complex misspellings, and multilingual requests. The tests include 31 hand-written query cases; they do not establish broad accuracy.
+This is an explainable information-retrieval baseline. It is not a trained predictive model or generative AI. It can miss unlisted synonyms, complex misspellings, and multilingual requests. The tests include 36 hand-written query cases; they do not establish broad accuracy.
 
 ## A practical example
 
-“My ceiling fan stopped working” is tokenized and compared with each listing profile. The Electrical category profile includes common terms such as “fan,” “wiring,” and “repair.” The match score rises when those weighted terms overlap. The app also returns the overlapping word so a visitor can see why the listing appeared.
+“My ceiling fan stopped working” is tokenized and compared with each listing profile. The Electrical category profile includes distinguishing terms such as “fan,” “wiring,” and “switch.” Generic request words such as “repair” and “work” are ignored so those words alone do not make unrelated providers appear relevant. The app returns overlapping terms and curated synonym matches so a visitor can see why a listing appeared.
 
 ## How to test
 

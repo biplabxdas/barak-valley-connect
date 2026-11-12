@@ -51,11 +51,89 @@ python -m pip install -r requirements-test.txt
 python -m unittest -v
 ```
 
+## Architecture
+
+```text
+Browser (static/index.html, app.js, styles.css)
+        │ fetch + JSON / signed session cookie
+        ▼
+FastAPI routes (main.py) ─────── matcher.py (TF-IDF + cosine ranking)
+        │ parameterized SQL
+        ▼
+SQLite for local development / PostgreSQL when DATABASE_URL is set
+```
+
+The browser renders provider cards and sends search, account, request, and matching
+operations to FastAPI. FastAPI validates incoming JSON with Pydantic, applies role
+checks for private operations, and reads or writes provider/account/request rows.
+For matching, it loads the current provider records and passes their public listing
+text to `matcher.py`; no customer query is stored by the recommendation endpoint.
+The same application SQL is used for SQLite and PostgreSQL through a small adapter.
+
+## API overview
+
+Interactive API documentation is available at `/docs` when the app is running.
+Authentication uses the signed, HTTP-only session cookie set by the login endpoints.
+
+| Method and path | Access | Purpose |
+| --- | --- | --- |
+| `GET /health` | Public | Health check including database connectivity |
+| `GET /api/auth/me` | Public | Return the current session state |
+| `POST /api/auth/register` | Public, rate limited | Register customer or provider; creates a provider listing for provider roles |
+| `POST /api/auth/login` / `POST /api/auth/logout` | Public | Sign in or clear the account session |
+| `POST /api/auth/admin-login` / `POST /api/auth/admin-logout` | Public | Sign in or clear the website owner session |
+| `GET /api/categories` | Public | List categories that have providers |
+| `GET /api/providers?category=&area=&q=` | Public | Browse/search listings; phone numbers are hidden |
+| `GET /api/providers/{id}` | Public; owner/listing owner may see phone | View a provider profile |
+| `POST /api/recommendations` | Public, rate limited | Rank live listings against a short natural-language request |
+| `POST /api/requests` | Public, rate limited | Submit a request with explicit privacy consent |
+| `GET /api/my/requests` | Customer | View requests owned by the signed-in customer |
+| `GET /api/provider/profile` / `PUT /api/provider/profile` | Provider | Read or update only the signed-in provider's listing |
+| `GET /api/provider/requests` | Provider | View requests for only that provider's listing, including contact needed to respond |
+| `GET /api/requests`, `PATCH /api/requests/{id}/status`, `DELETE /api/requests/{id}` | Website owner | Manage service requests |
+| `GET /api/summary`, `GET /api/admin/requests.csv` | Website owner | View counts or download a private CSV backup |
+| `POST /api/providers`, `PUT /api/providers/{id}`, `DELETE /api/providers/{id}` | Website owner | Manage directory listings |
+
+## How provider matching works
+
+1. The app tokenizes the requirement and each current listing into lowercase words,
+   removing common and overly generic words. A small curated synonym map handles
+   local-service vocabulary such as `faucet`/`tap` and `hedges`/`pruning`; a
+   conservative close-word correction handles common typos.
+2. It builds a term-frequency vector for the query and each listing. Each term is
+   weighted with smoothed inverse document frequency:
+   `idf(t) = ln((N + 1) / (df(t) + 1)) + 1`. A term that distinguishes one listing
+   matters more than a word present in every listing.
+3. It normalizes the vectors and computes cosine similarity:
+   `cos(q, d) = (q · d) / (||q|| × ||d||)`. Results below the implementation's
+   minimum relevance threshold are omitted; remaining rows are sorted by score and
+   name, and the top three are returned with overlapping terms as explanations.
+
+The displayed score is text similarity on this current directory, not a probability,
+quality rating, or endorsement. This baseline does not understand sentence meaning,
+language beyond its English vocabulary, availability, distance, price, or provider
+quality. Keep provider descriptions and skills accurate; add synonyms only when they
+reflect real service vocabulary, and verify ranking changes with the API query cases.
+
+## Interview walkthrough
+
+Describe the project as a small full-stack marketplace with a transparent retrieval
+baseline. A customer submits a short requirement; the FastAPI endpoint validates it,
+loads actual provider listings from the database, then uses TF-IDF to represent query
+and listing text and cosine similarity to rank them. The interface shows the score
+and matched terms, and the API returns a clear no-match response when nothing clears
+the threshold. You can explain the tradeoff: this is inexpensive, deterministic, and
+inspectable for a small directory, but it misses semantic equivalence; a future
+evaluation could compare this baseline with a multilingual embedding model using
+human-labeled query/provider relevance pairs. Scores must not be described as
+confidence or probabilities.
+
 The checks cover customer/provider registration and login, role-scoped endpoints,
 profile updates, category filters, request creation and history, SQLite persistence
-after reopening the app, and 31 realistic provider-matching queries against rows in
-an isolated test database. The query set includes common spelling variations and
-unrelated requests that should return no suggestions.
+after reopening the app, additive migration safety, security headers and production
+configuration validation. Thirty-six realistic provider-matching queries use rows in
+an isolated test database; the cases include common spelling variations, curated
+synonyms and unrelated requests that should return no suggestions.
 
 ## Data and privacy
 

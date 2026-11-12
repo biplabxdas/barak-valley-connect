@@ -35,6 +35,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 SITE_OPERATOR_NAME = os.getenv("SITE_OPERATOR_NAME", "Website owner (not set)")
 PRIVACY_CONTACT_EMAIL = os.getenv("PRIVACY_CONTACT_EMAIL", "privacy contact not set")
 REQUEST_RETENTION_DAYS = os.getenv("REQUEST_RETENTION_DAYS", "30")
+
+
 class Database:
     """Small adapter that lets the same beginner SQL work with SQLite and Postgres."""
 
@@ -140,6 +142,19 @@ def initialize_database() -> None:
                 if column not in existing:
                     db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
+        # Create indexes only after the additive migration has supplied their columns.
+        db.execute("CREATE INDEX IF NOT EXISTS idx_providers_category ON providers(category)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_providers_account_id ON providers(account_id)")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_requests_customer_created "
+            "ON service_requests(customer_id, created_at DESC, id DESC)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_requests_provider_created "
+            "ON service_requests(service_id, created_at DESC, id DESC)"
+        )
+        db.execute("CREATE INDEX IF NOT EXISTS idx_requests_created_at ON service_requests(created_at)")
+
         existing_categories = db.execute("SELECT DISTINCT category FROM providers").fetchall()
         for category_row in existing_categories:
             category_name = category_row["category"].strip()
@@ -172,13 +187,18 @@ def initialize_database() -> None:
 def validate_production_settings() -> None:
     if APP_ENV != "production":
         return
+    operator_name = SITE_OPERATOR_NAME.strip()
+    privacy_email = PRIVACY_CONTACT_EMAIL.strip()
+    placeholder_values = {"replace-before-public-launch", "change-me", "placeholder"}
     if (
         len(ADMIN_PASSWORD) < 16
         or len(SESSION_SECRET) < 32
         or not os.getenv("SESSION_SECRET")
         or not DATABASE_URL.startswith(("postgres://", "postgresql://"))
-        or SITE_OPERATOR_NAME == "Website owner (not set)"
-        or PRIVACY_CONTACT_EMAIL == "privacy contact not set"
+        or len(operator_name) < 2
+        or operator_name.casefold() in placeholder_values
+        or privacy_email.casefold() in placeholder_values | {"privacy contact not set"}
+        or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", privacy_email)
         or not REQUEST_RETENTION_DAYS.isdigit()
         or int(REQUEST_RETENTION_DAYS) < 1
     ):
@@ -211,6 +231,18 @@ app.add_middleware(
     https_only=APP_ENV == "production",
     max_age=60 * 60 * 12,
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
+
+
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -464,8 +496,8 @@ def account_logout(request: Request):
 @app.get("/api/providers")
 def list_providers(
     request: Request,
-    category: str | None = None,
-    area: str | None = None,
+    category: str | None = Query(default=None, max_length=50),
+    area: str | None = Query(default=None, max_length=80),
     q: str | None = Query(default=None, max_length=120),
 ):
     """List providers with category, area, and text filters."""
@@ -484,7 +516,6 @@ def list_providers(
             values.append(f"%{term}%")
     query += " ORDER BY name"
     with connect_db() as db:
-        cleanup_expired_requests(db)
         rows = [dict(row) for row in db.execute(query, values).fetchall()]
         is_owner = bool(request.session.get("is_admin"))
         return [provider_response(row, include_phone=is_owner) for row in rows]
@@ -525,7 +556,6 @@ def recommend_providers(payload: RecommendationInput, request: Request):
     enforce_rate_limit(request, action="recommendations", limit=60, window_seconds=900,
                        detail="Too many searches. Please try again in a few minutes.")
     with connect_db() as db:
-        cleanup_expired_requests(db)
         rows = [dict(row) for row in db.execute(
             "SELECT id, name, category, area, description, skills FROM providers ORDER BY name"
         ).fetchall()]

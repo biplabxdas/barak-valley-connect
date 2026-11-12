@@ -2,6 +2,7 @@
 
 import os
 import csv
+from contextlib import closing
 from io import StringIO
 from pathlib import Path
 import sqlite3
@@ -33,7 +34,9 @@ REALISTIC_QUERY_CASES = [
     ("furniture assembly and shelves", 6), ("custom woodwork door", 6),
     ("typo fan not wokring", 1), ("typo leeking pipe", 2),
     ("faucet drips", 2), ("toilet pipe issue", 2),
-    ("typo wodworker needed", 6), ("wedding photographer", None),
+    ("typo wodworker needed", 6), ("trim hedges", 4), ("sofa repair", 6),
+    ("build a bookcase", 6), ("cupboard door broken", 6),
+    ("laptop repair", None), ("wedding photographer", None),
     ("tax filing assistance", None),
 ]
 
@@ -61,6 +64,9 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertIn("does not save that description", privacy.text)
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json(), {"status": "ok"})
+        self.assertEqual(home.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(home.headers["x-frame-options"], "DENY")
+        self.assertEqual(home.headers["referrer-policy"], "strict-origin-when-cross-origin")
 
     def test_production_requires_a_long_session_secret(self):
         valid_settings = {
@@ -76,6 +82,21 @@ class ApiIntegrationTests(unittest.TestCase):
                 main.validate_production_settings()
         with patch.multiple(main, **valid_settings, SESSION_SECRET="s" * 32):
             main.validate_production_settings()
+
+    def test_production_rejects_placeholder_contact_values(self):
+        valid_settings = {
+            "APP_ENV": "production", "ADMIN_PASSWORD": "a-long-owner-password",
+            "DATABASE_URL": "postgresql://user:pass@example.test/app",
+            "SESSION_SECRET": "s" * 32, "SITE_OPERATOR_NAME": "Barak Valley Connect",
+            "PRIVACY_CONTACT_EMAIL": "privacy@example.test", "REQUEST_RETENTION_DAYS": "30",
+        }
+        for key, value in (("SITE_OPERATOR_NAME", "replace-before-public-launch"),
+                           ("PRIVACY_CONTACT_EMAIL", "replace-before-public-launch"),
+                           ("PRIVACY_CONTACT_EMAIL", "not-an-email")):
+            settings = {**valid_settings, key: value}
+            with self.subTest(key=key, value=value), patch.multiple(main, **settings):
+                with self.assertRaises(RuntimeError):
+                    main.validate_production_settings()
 
     def test_csv_export_neutralizes_spreadsheet_formulas(self):
         created = self.client.post("/api/requests", json={
@@ -105,6 +126,45 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(profile.status_code, 200)
         self.assertNotIn("phone", profile.json())
 
+    def test_provider_filters_have_bounded_lengths(self):
+        self.assertEqual(self.client.get("/api/providers?category=" + "x" * 51).status_code, 422)
+        self.assertEqual(self.client.get("/api/providers?area=" + "x" * 81).status_code, 422)
+
+    def test_additive_migration_adds_columns_before_creating_indexes(self):
+        legacy_path = Path(_TEMP_DIR.name) / "legacy.db"
+        legacy_path.unlink(missing_ok=True)
+        with closing(sqlite3.connect(legacy_path)) as connection:
+            connection.executescript("""
+                CREATE TABLE accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL, role TEXT NOT NULL,
+                    display_name TEXT NOT NULL, phone TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE providers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+                    category TEXT NOT NULL, area TEXT NOT NULL, phone TEXT NOT NULL
+                );
+                CREATE TABLE service_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT NOT NULL,
+                    customer_phone TEXT NOT NULL, service_id INTEGER NOT NULL,
+                    details TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Pending',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+        try:
+            with patch.object(main, "DB_PATH", legacy_path):
+                main.initialize_database()
+            with closing(sqlite3.connect(legacy_path)) as connection:
+                provider_columns = {row[1] for row in connection.execute("PRAGMA table_info(providers)")}
+                request_columns = {row[1] for row in connection.execute("PRAGMA table_info(service_requests)")}
+                index_names = {row[1] for row in connection.execute("PRAGMA index_list(service_requests)")}
+            self.assertTrue({"description", "skills", "account_id", "category_id", "is_sample"} <= provider_columns)
+            self.assertIn("customer_id", request_columns)
+            self.assertIn("idx_requests_customer_created", index_names)
+        finally:
+            legacy_path.unlink(missing_ok=True)
+
     def test_recommendation_uses_seeded_database_listings(self):
         response = self.client.post(
             "/api/recommendations", json={"description": "My ceiling fan stopped working"}
@@ -117,7 +177,7 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertLessEqual(data["matches"][0]["score"], 1)
         self.assertNotIn("phone", data["matches"][0])
 
-    def test_31_realistic_queries_rank_database_providers_and_reject_unrelated_requests(self):
+    def test_realistic_queries_rank_database_providers_and_reject_unrelated_requests(self):
         provider_rows = [
             (1, "Silchar Electrical Works", "Electrical", "Household electrical repairs, wiring, lights, fans and switches", "fan installation, wiring, circuit repair"),
             (2, "Barak Plumbing Service", "Plumbing", "Repair leaking pipes, taps, drains, bathroom and kitchen fittings", "pipe repair, tap installation"),

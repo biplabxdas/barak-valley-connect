@@ -17,6 +17,9 @@ CATEGORY_TERMS = {
 STOP_WORDS = {
     "the", "and", "for", "with", "need", "help", "want", "please", "a", "an",
     "my", "in", "to", "is", "of", "on", "at", "can", "you", "me", "some",
+    # These words occur across many categories and should not create a false match alone.
+    "repair", "repairs", "fix", "fixing", "maintenance", "service", "services",
+    "work", "working", "job", "jobs",
 }
 QUERY_SYNONYMS = {
     "electrician": ("electrical", "wiring", "power"),
@@ -35,6 +38,16 @@ QUERY_SYNONYMS = {
     "woodworker": ("carpenter", "woodworking", "furniture"),
     "vacuum": ("cleaning", "cleaner", "house"),
     "mop": ("cleaning", "cleaner", "house"),
+    "hedge": ("garden", "gardening", "pruning"),
+    "hedges": ("garden", "gardening", "pruning"),
+    "sofa": ("furniture", "carpentry", "wood"),
+    "couch": ("furniture", "carpentry", "wood"),
+    "bookcase": ("bookshelf", "shelf", "shelves", "carpentry"),
+    "bookshelf": ("bookcase", "shelf", "shelves", "carpentry"),
+    "cupboard": ("cabinet", "carpentry", "furniture"),
+    "cupboards": ("cabinet", "carpentry", "furniture"),
+    "dripping": ("drip", "leak", "plumbing", "pipe"),
+    "drips": ("drip", "leak", "plumbing", "pipe"),
 }
 
 
