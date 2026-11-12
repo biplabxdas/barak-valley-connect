@@ -365,6 +365,7 @@ document.querySelector('#account-logout').addEventListener('click', async () => 
   try {
     await api('/api/auth/logout', { method: 'POST' });
     currentAccount = null;
+    form.reset();
     showAccountDashboard();
     document.querySelector('#account-dialog').close();
     await loadProviders();

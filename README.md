@@ -67,7 +67,7 @@ Passwords are stored as PBKDF2 hashes. Public listings do not show provider phon
 
 `render.yaml` configures the Render web service. Production requires `DATABASE_URL`, `SESSION_SECRET`, `ADMIN_PASSWORD` (at least 16 characters), `SITE_OPERATOR_NAME`, `PRIVACY_CONTACT_EMAIL`, and `REQUEST_RETENTION_DAYS` (a positive number). Keep secrets in Render's private environment settings, not in this repository.
 
-The project copy includes local changes that have not been pushed or deployed. The live URL, if available, may still be running the previous version. PostgreSQL and Render deployment should be checked with the intended private connection settings before publishing.
+The account and matching changes are on the `codex/final-barak-valley-connect` branch and in draft PR #2. They have not been merged or deployed. The existing live URL may still be running the previous version. PostgreSQL and Render deployment should be checked with the intended private connection settings before publishing.
 
 ## Current limits
 
@@ -80,7 +80,8 @@ on providers maintaining useful descriptions and skills. Provider accounts are n
 email-verified, and the app does not include password recovery, payments, or
 automatic email/SMS notifications.
 
-The local final verification used SQLite and an isolated test database. A live
-PostgreSQL connection, physical mobile device, and deployed Render service were not
-available for this check, so those environments remain unverified. No changes were
-pushed to GitHub and no deployment was made.
+Rate limits are held in process memory and reset on restart; a multi-worker public
+deployment should use a shared rate-limit store. The local verification used SQLite
+and an isolated test database. A live PostgreSQL connection, physical mobile device,
+and deployed Render service were not available for this check, so those environments
+remain unverified. The current changes are in draft PR #2 and have not been deployed.

@@ -1,10 +1,13 @@
 """API integration checks against an isolated, temporary SQLite database."""
 
 import os
+import csv
+from io import StringIO
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 _TEMP_DIR = tempfile.TemporaryDirectory()
@@ -38,8 +41,10 @@ REALISTIC_QUERY_CASES = [
 class ApiIntegrationTests(unittest.TestCase):
     def setUp(self):
         Path(os.environ["DATABASE_PATH"]).unlink(missing_ok=True)
+        main.LOGIN_ATTEMPTS.clear()
         main.RECOMMENDATION_ATTEMPTS.clear()
         main.ACCOUNT_LOGIN_ATTEMPTS.clear()
+        main.ACCOUNT_REGISTER_ATTEMPTS.clear()
         main.REQUEST_ATTEMPTS.clear()
         self.client_context = TestClient(main.app)
         self.client = self.client_context.__enter__()
@@ -58,6 +63,37 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertIn('id="match-form"', home.text)
         self.assertEqual(privacy.status_code, 200)
         self.assertIn("does not save that description", privacy.text)
+
+    def test_production_requires_a_long_session_secret(self):
+        valid_settings = {
+            "APP_ENV": "production",
+            "ADMIN_PASSWORD": "a-long-owner-password",
+            "DATABASE_URL": "postgresql://user:pass@example.test/app",
+            "SITE_OPERATOR_NAME": "Barak Valley Connect",
+            "PRIVACY_CONTACT_EMAIL": "privacy@example.test",
+            "REQUEST_RETENTION_DAYS": "30",
+        }
+        with patch.multiple(main, **valid_settings, SESSION_SECRET="s" * 31):
+            with self.assertRaisesRegex(RuntimeError, "session secret of at least 32 characters"):
+                main.validate_production_settings()
+        with patch.multiple(main, **valid_settings, SESSION_SECRET="s" * 32):
+            main.validate_production_settings()
+
+    def test_csv_export_neutralizes_spreadsheet_formulas(self):
+        created = self.client.post("/api/requests", json={
+            "customer_name": "=1+1", "customer_phone": "+1234567890",
+            "service_id": 1, "details": "@SUM(1,1)", "privacy_consent": True,
+        })
+        self.assertEqual(created.status_code, 201)
+        self.client.post("/api/auth/admin-login", json={"password": "test-owner-password"})
+        exported = self.client.get("/api/admin/requests.csv")
+        self.assertEqual(exported.status_code, 200)
+        row = next(csv.DictReader(StringIO(exported.text)))
+        self.assertEqual(row["customer_name"], "'=1+1")
+        self.assertEqual(row["customer_phone"], "'+1234567890")
+        self.assertEqual(row["details"], "'@SUM(1,1)")
+        self.assertEqual(main.spreadsheet_safe_value("  \t=2+2"), "'  \t=2+2")
+        self.assertEqual(main.spreadsheet_safe_value("Ordinary request"), "Ordinary request")
 
     def test_public_provider_list_hides_phone_numbers(self):
         response = self.client.get("/api/providers")

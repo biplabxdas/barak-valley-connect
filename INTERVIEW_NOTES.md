@@ -17,7 +17,7 @@ The browser sends a short description to `POST /api/recommendations`. The backen
 
 The matcher lowercases and tokenizes text, removes common words, and expands a small set of category vocabulary. It calculates TF-IDF weights and cosine similarity. For each listing, term frequency is `1 + ln(count)`; inverse document frequency is `ln((N + 1) / (df + 1)) + 1`. It ranks matches above a threshold, returns up to three, and includes matching words. The interface displays the cosine score as a percentage but labels it as text similarity, not a probability.
 
-This is an explainable information-retrieval baseline. It is not a trained predictive model or generative AI. It can miss synonyms, misspellings, and multilingual requests. The current tests use a small hand-written sample set; they do not establish broad accuracy.
+This is an explainable information-retrieval baseline. It is not a trained predictive model or generative AI. It can miss unlisted synonyms, complex misspellings, and multilingual requests. The tests include 31 hand-written query cases; they do not establish broad accuracy.
 
 ## A practical example
 

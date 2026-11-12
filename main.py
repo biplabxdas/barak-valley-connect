@@ -29,8 +29,8 @@ ROOT = Path(__file__).parent
 load_dotenv(ROOT / ".env")
 APP_ENV = os.getenv("APP_ENV", "development")
 DB_PATH = Path(os.getenv("DATABASE_PATH", str(ROOT / "business.db")))
-SESSION_SECRET = os.getenv("SESSION_SECRET", "local-development-session-key-change-this")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "local-demo-password" if APP_ENV != "production" else "")
+SESSION_SECRET = os.getenv("SESSION_SECRET") or secrets.token_urlsafe(32)
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 SITE_OPERATOR_NAME = os.getenv("SITE_OPERATOR_NAME", "Website owner (not set)")
 PRIVACY_CONTACT_EMAIL = os.getenv("PRIVACY_CONTACT_EMAIL", "privacy contact not set")
@@ -129,7 +129,8 @@ def initialize_database() -> None:
         for table, columns in tables_and_columns.items():
             if db.is_postgres:
                 existing = {row["column_name"] for row in db.execute(
-                    "SELECT column_name FROM information_schema.columns WHERE table_name = ?", (table,)
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = current_schema() AND table_name = ?", (table,)
                 ).fetchall()}
             else:
                 existing = {row["name"] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -166,10 +167,12 @@ def initialize_database() -> None:
                 )
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    if APP_ENV == "production" and (
+def validate_production_settings() -> None:
+    if APP_ENV != "production":
+        return
+    if (
         len(ADMIN_PASSWORD) < 16
+        or len(SESSION_SECRET) < 32
         or not os.getenv("SESSION_SECRET")
         or not DATABASE_URL.startswith(("postgres://", "postgresql://"))
         or SITE_OPERATOR_NAME == "Website owner (not set)"
@@ -177,7 +180,15 @@ async def lifespan(_: FastAPI):
         or not REQUEST_RETENTION_DAYS.isdigit()
         or int(REQUEST_RETENTION_DAYS) < 1
     ):
-        raise RuntimeError("Production requires database, owner, privacy, retention, password, and session settings.")
+        raise RuntimeError(
+            "Production requires a database, owner and privacy contacts, positive retention, "
+            "an admin password of at least 16 characters, and a session secret of at least 32 characters."
+        )
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    validate_production_settings()
     initialize_database()
     with connect_db() as db:
         cleanup_expired_requests(db)
@@ -414,7 +425,6 @@ def register_account(payload: AccountRegistration, request: Request):
     ACCOUNT_REGISTER_ATTEMPTS[client_ip] = attempts
     request.session.clear()
     request.session["account_id"] = account_id
-    request.session["account_role"] = payload.role
     return {"account": account}
 
 
@@ -435,7 +445,6 @@ def account_login(payload: AccountLogin, request: Request):
     ACCOUNT_LOGIN_ATTEMPTS.pop(client_ip, None)
     request.session.clear()
     request.session["account_id"] = row["id"]
-    request.session["account_role"] = row["role"]
     return {"account": public_account(row)}
 
 
@@ -731,12 +740,19 @@ def export_requests(_: None = Depends(require_admin)):
         fields = ["id", "created_at", "customer_name", "customer_phone", "provider_name", "category", "details", "status"]
         writer = csv.DictWriter(buffer, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(dict(row) for row in rows)
+        writer.writerows({field: spreadsheet_safe_value(row[field]) for field in fields} for row in rows)
     return StreamingResponse(
         iter([buffer.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=private-service-requests.csv"},
     )
+
+
+def spreadsheet_safe_value(value):
+    """Prevent CSV text values from being interpreted as spreadsheet formulas."""
+    if isinstance(value, str) and value.lstrip("\ufeff \t\r\n")[:1] in {"=", "+", "-", "@"}:
+        return "'" + value
+    return value
 
 
 @app.delete("/api/requests/{request_id}", status_code=204)

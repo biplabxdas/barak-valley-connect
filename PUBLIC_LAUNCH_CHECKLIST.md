@@ -5,7 +5,7 @@
 
 ## Current status
 
-The existing website is deployed on Render and uses a Supabase PostgreSQL database. This local project copy has additional account, provider profile, and matching changes that have not been pushed or deployed. The existing live URL may not include these changes.
+The existing website is documented as running on Render with a Supabase PostgreSQL database. The account, provider profile, and matching changes are on `codex/final-barak-valley-connect` and in draft PR #2; they have not been merged or deployed. The existing live URL may not include these changes.
 
 New production installations start with an empty directory. Customer and provider registrations create accounts; provider registration creates a public listing. Confirm provider consent and business details before promoting the updated site.
 
