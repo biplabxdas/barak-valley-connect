@@ -163,3 +163,12 @@ The release-readiness run exercised customer and provider registration/login, pr
 These controlled live checks leave two synthetic QA accounts, one explicitly labelled QA provider listing, and one consented QA request in the temporary demo database. The listing name and description say it is synthetic, and the request text says not to contact the test customer. Remove these records through the owner dashboard before inviting real customers; account removal currently requires owner assistance.
 
 Visual inspection covered the homepage at a narrow mobile-sized viewport and a provider profile at a desktop-sized viewport. A separate tablet viewport and physical phone were not available for this pass. The current README does not include committed screenshot image files; use the live homepage and linked provider profile as visual references.
+
+
+## Responsive and release check (November 14, 2026)
+
+The provider directory was checked at 390 px (mobile) and 1440 px (desktop) in the local browser, and at 768 px (tablet) on the deployed website. The 768 px check exposed a horizontal-overflow issue in the three-column cards; the feature branch now uses two columns below 900 px and wraps long demonstration labels. After deployment, the 768 px page width and document width both measured 768 px. A physical phone and tablet were not used.
+
+The current demo database still contains the clearly labelled “Synthetic QA Provider Phase 3 Updated” listing and its consented test request. The application does not provide customer-account self-deletion. Remove the QA listing and request through the owner dashboard before inviting real customers; the two QA accounts require owner assistance for removal. No real customer records were deleted.
+
+Repository screenshot image files are not included in this branch. The live homepage and public demo profiles can be opened at [the deployed site](https://barak-valley-connect-33ic.onrender.com/). The browser screenshot used during this release check is available in the handover conversation, but has not been committed as a README image.
