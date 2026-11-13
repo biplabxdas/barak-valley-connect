@@ -16,6 +16,16 @@ The recommendation engine is a deterministic information-retrieval system. It us
 - Use the website owner area to manage listings and requests.
 - Run locally with SQLite or in production with PostgreSQL.
 
+## Technology stack
+
+- **Backend:** Python 3.11+, FastAPI, Pydantic, Uvicorn
+- **Database:** SQLite for local development and tests; PostgreSQL through psycopg for the hosted service
+- **Frontend:** semantic HTML, responsive CSS, and browser-native JavaScript; no frontend build step
+- **Matching:** Python standard-library TF-IDF and cosine similarity with a curated local service vocabulary
+- **Hosting:** Render web service and Render PostgreSQL Blueprint
+
+The matcher does not call an LLM or a paid AI API. Query understanding uses transparent vocabulary rules and conservative spelling correction.
+
 ## Project layout
 
 ```text
@@ -89,6 +99,29 @@ Cosine similarity measures the angle between query and listing term vectors. The
 
 The parser is intentionally local and inspectable. It does not understand all sentence meanings, arbitrary synonyms, or every language, and availability is self-reported rather than live scheduling data. Recommendation quality should be evaluated against consented, human-labeled queries before use in consequential decisions.
 
+```mermaid
+flowchart LR
+    A[Customer describes a job] --> B[FastAPI validates request]
+    B --> C[Parse category, skills, area, urgency]
+    C --> D[Load current provider rows from database]
+    D --> E[TF-IDF and cosine text score]
+    D --> F[Skill, category, area, availability signals]
+    E --> G[Weighted ranking and reasons]
+    F --> G
+    G --> H[Browser displays ranked listings and factors]
+    H -. selected provider plus consent .-> I[Service request saved in database]
+```
+
+## Example demonstration flow
+
+1. Search for **“Urgent electrician to fix a noisy ceiling fan and exposed wiring near Silchar.”**
+2. Review the parsed category, skills, area, and urgency. Open **See match factors** to view the text, skill, category, location, and availability signals.
+3. Follow a provider profile to see its skills and availability. The seeded synthetic listings are labelled as demonstrations and cannot receive requests.
+4. Register a customer or provider account. Providers can update their listing and availability; customers can see their own request history.
+5. For a live request demonstration, use a clearly identified QA provider account and synthetic customer data. Do not send requests to a real provider without their consent.
+
+The example is a user-facing explanation of the implemented flow. It does not imply that the matcher understands every word semantically or that the score predicts service quality.
+
 ## API overview
 
 Interactive schema: `/docs`.
@@ -101,10 +134,15 @@ Interactive schema: `/docs`.
 | GET | `/api/providers/{id}` | Read a public profile; phone remains private |
 | POST | `/api/recommendations` | Analyze a requirement and rank actual provider rows |
 | POST | `/api/auth/register` | Register a customer or provider account |
+| POST | `/api/auth/login`, `/api/auth/logout` | Start or end an account session |
+| GET | `/api/auth/me` | Read the current account session |
+| POST | `/api/auth/admin-login`, `/api/auth/admin-logout` | Start or end the website owner session |
 | GET/PUT | `/api/provider/profile` | Read or update the signed-in provider's own profile |
 | POST | `/api/requests` | Submit a request with explicit privacy consent |
 | GET | `/api/my/requests` | View the signed-in customer's own requests |
 | GET | `/api/provider/requests` | View requests for the signed-in provider's listing |
+| GET/PATCH/DELETE | `/api/requests...` | Owner-only request management |
+| POST/PUT/DELETE | `/api/providers...` | Owner-only listing management |
 
 Owner management routes require the owner session. Public provider responses never include phone numbers.
 
@@ -118,4 +156,10 @@ When the production provider directory is empty, the app inserts six synthetic l
 
 Required production values are `APP_ENV=production`, `DATABASE_URL`, `SESSION_SECRET` (at least 32 characters), `ADMIN_PASSWORD` (at least 16 characters), `SITE_OPERATOR_NAME`, `PRIVACY_CONTACT_EMAIL`, and positive `REQUEST_RETENTION_DAYS`. `DEMO_PROVIDERS_ENABLED` defaults to true only in production and can be explicitly disabled.
 
-The currently configured demo site is [barak-valley-connect-33ic.onrender.com](https://barak-valley-connect-33ic.onrender.com). Its free PostgreSQL resource is temporary and expires on the platform's free-plan schedule; use durable, backed-up PostgreSQL before relying on it for real customer records. The older service was left untouched. Changes are on `codex/final-barak-valley-connect`; they are not merged into `main`.
+The currently configured demo site is [barak-valley-connect-33ic.onrender.com](https://barak-valley-connect-33ic.onrender.com). Its free PostgreSQL resource is temporary (currently scheduled to expire December 12, 2026); use durable, backed-up PostgreSQL before relying on it for real customer records. The older service was left untouched. Changes are on `codex/final-barak-valley-connect`; they are not merged into `main`.
+
+The release-readiness run exercised customer and provider registration/login, provider self-edit, matching and explanations, request submission, customer history after a new login, and the provider's request inbox using synthetic QA details. The browser showed the same saved request in both role-scoped views after logout and sign-in. The public production `/health` endpoint returned an OK response. The automated test suite runs on an isolated SQLite database; this is separate from the live PostgreSQL workflow check.
+
+These controlled live checks leave two synthetic QA accounts, one explicitly labelled QA provider listing, and one consented QA request in the temporary demo database. The listing name and description say it is synthetic, and the request text says not to contact the test customer. Remove these records through the owner dashboard before inviting real customers; account removal currently requires owner assistance.
+
+Visual inspection covered the homepage at a narrow mobile-sized viewport and a provider profile at a desktop-sized viewport. A separate tablet viewport and physical phone were not available for this pass. The current README does not include committed screenshot image files; use the live homepage and linked provider profile as visual references.
