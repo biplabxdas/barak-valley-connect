@@ -162,7 +162,7 @@ The release-readiness run exercised customer and provider registration/login, pr
 
 The Phase 3 synthetic QA provider listing and its consented test request were removed through owner management on November 14, 2026. Two synthetic QA accounts remain; no account deletion or real-customer data deletion was performed.
 
-Visual inspection covered the homepage at a narrow mobile-sized viewport and a provider profile at a desktop-sized viewport. A separate tablet viewport and physical phone were not available for this pass. The current README does not include committed screenshot image files; use the live homepage and linked provider profile as visual references.
+Responsive verification details and known physical-device limits are recorded in the responsive check section below. Browser screenshots were captured during release review, but image files are not committed in this repository.
 
 
 ## Responsive and release check (November 14, 2026)
