@@ -29,14 +29,15 @@
     </section>
     <p id="success-message" class="success-message" role="status" hidden></p>
     <section class="match-section" aria-labelledby="match-title">
-      <div class="match-copy"><p class="eyebrow">NEED A HAND?</p><h2 id="match-title">Describe the job</h2>
-        <p>Tell us what you need in a sentence. We’ll compare it with the current listings and suggest a few local providers.</p></div>
+      <div class="match-copy"><p class="eyebrow">EXPLAINABLE LOCAL MATCHING</p><h2 id="match-title">Describe the job</h2>
+        <p>Write what you need in your own words. The recommendation engine looks at service fit, requested area, and each listing’s stated availability.</p></div>
       <form id="match-form" class="match-form">
         <label class="visually-hidden" for="match-description">Describe the service you need</label>
         <textarea id="match-description" name="description" required minlength="3" maxlength="300" rows="2" placeholder="For example: I need help fixing a leaking kitchen tap"></textarea>
         <button id="match-button" class="button button-dark" type="submit">Find a match <span>→</span></button>
       </form>
-      <p class="match-note">Suggestions are based on words in your request and provider listings. They are not endorsements. Don’t include contact or sensitive details.</p>
+      <p class="match-note">Uses a local TF‑IDF text matcher plus structured service, area, and availability signals. Scores are not probabilities or provider ratings. Don’t include contact or sensitive details.</p>
+      <div id="match-understanding" class="match-understanding" hidden aria-live="polite"></div>
       <div id="match-results" class="match-results" aria-live="polite"></div>
     </section>
     <section class="section-heading">
@@ -88,6 +89,7 @@
             <label>Area served<input name="area" minlength="2" maxlength="80" placeholder="e.g. Silchar"></label>
             <label>About your service<textarea name="description" maxlength="1000" rows="3"></textarea></label>
             <label>Skills or services<input name="skills" maxlength="500" placeholder="e.g. tap repair, pipe fitting"></label>
+            <label>Current availability<select name="availability"><option>Not specified</option><option>Available</option><option>Busy</option><option>Unavailable</option></select></label>
           </div>
         </div>
         <p id="account-message" class="form-message" role="status"></p>
@@ -121,6 +123,7 @@
       <label>Contact phone<input name="phone" required minlength="7" maxlength="20" placeholder="Business contact number"></label>
       <label>About this service<textarea name="description" maxlength="1000" rows="3"></textarea></label>
       <label>Skills or services<input name="skills" maxlength="500" placeholder="e.g. tap repair, pipe fitting"></label>
+      <label>Current availability<select name="availability"><option>Not specified</option><option>Available</option><option>Busy</option><option>Unavailable</option></select></label>
       <p id="provider-form-message" class="form-message" role="status"></p>
       <button class="button button-dark submit-button" type="submit">Save listing <span>→</span></button>
     </form>

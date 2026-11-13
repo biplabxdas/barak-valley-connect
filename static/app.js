@@ -41,6 +41,14 @@ function safeAttribute(value) {
   return safeText(value).replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
+function availabilityClass(status = 'Not specified') {
+  return status.toLowerCase().replaceAll(' ', '-');
+}
+
+function availabilityLabel(status = 'Not specified') {
+  return status === 'Not specified' ? 'Availability not stated' : `Listed ${status.toLowerCase()}`;
+}
+
 async function loadProviders() {
   const selectedCategory = filter.value;
   const params = new URLSearchParams();
@@ -63,9 +71,11 @@ async function loadProviders() {
     <article class="provider-card">
       <div class="card-top"><div class="avatar">${safeText(provider.name.slice(0, 1).toUpperCase())}</div><span class="tag">${safeText(provider.category)}</span></div>
       <h3><a class="provider-link" href="/providers/${provider.id}">${safeText(provider.name)}</a></h3>
-      ${provider.is_sample ? '<span class="sample-label">Sample listing · local demo data</span>' : ''}
+      ${provider.is_sample ? '<span class="sample-label">Synthetic demo provider · not a real business</span>' : ''}
       <p class="provider-meta">⌖ ${safeText(provider.area)}</p>
-      <div class="card-bottom">${isAdmin ? `<span class="phone">${safeText(provider.phone)}</span><div class="card-actions"><button class="manage-button edit-provider" data-provider-id="${provider.id}">Edit</button><button class="manage-button delete-provider" data-provider-id="${provider.id}">Remove</button><button class="request-button" data-provider-id="${provider.id}">Request service →</button></div>` : `<button class="request-button" data-provider-id="${provider.id}">Request service →</button>`}</div>
+      <p class="provider-description">${safeText(provider.description || '')}</p>
+      <div class="provider-card-status"><span class="availability ${safeAttribute(availabilityClass(provider.availability))}">${safeText(availabilityLabel(provider.availability))}</span></div>
+      <div class="card-bottom">${isAdmin ? `<span class="phone">${safeText(provider.phone)}</span><div class="card-actions"><button class="manage-button edit-provider" data-provider-id="${provider.id}">Edit</button><button class="manage-button delete-provider" data-provider-id="${provider.id}">Remove</button>${provider.is_sample ? '<button class="request-button" disabled title="Synthetic demo profiles do not accept requests">Demo only</button>' : `<button class="request-button" data-provider-id="${provider.id}">Request service →</button>`}</div>` : provider.is_sample ? '<button class="request-button" disabled title="Synthetic demo profiles do not accept requests">Demo profile · requests disabled</button>' : `<button class="request-button" data-provider-id="${provider.id}">Request service →</button>`}</div>
     </article>`).join('');
   providerList.querySelectorAll('.request-button').forEach((button) => {
     button.addEventListener('click', () => openRequest(Number(button.dataset.providerId)));
@@ -95,7 +105,7 @@ function openProviderEditor(providerId = null) {
   const provider = providers.find((item) => item.id === providerId);
   document.querySelector('#provider-form-title').textContent = provider ? 'Update provider' : 'Add a provider';
   if (provider) {
-    for (const field of ['name', 'category', 'area', 'phone', 'description', 'skills']) providerForm.elements[field].value = provider[field] || '';
+    for (const field of ['name', 'category', 'area', 'phone', 'description', 'skills', 'availability']) providerForm.elements[field].value = provider[field] || (field === 'availability' ? 'Not specified' : '');
     providerForm.elements.provider_id.value = provider.id;
   }
   providerDialog.showModal();
@@ -168,21 +178,33 @@ document.querySelector('#match-form').addEventListener('submit', async (event) =
   event.preventDefault();
   const button = document.querySelector('#match-button');
   const results = document.querySelector('#match-results');
+  const understanding = document.querySelector('#match-understanding');
   const description = document.querySelector('#match-description').value.trim();
   button.disabled = true;
   results.innerHTML = '<p class="match-message">Looking through the current listings…</p>';
+  understanding.hidden = true;
   try {
     const result = await api('/api/recommendations', {
       method: 'POST', body: JSON.stringify({ description }),
     });
+    const analysis = result.analysis || {};
+    const details = [];
+    if (analysis.category) details.push(`<span class="insight-chip">Service: ${safeText(analysis.category)}</span>`);
+    if (analysis.required_skills?.length) details.push(`<span class="insight-chip">Skills: ${safeText(analysis.required_skills.slice(0, 4).join(', '))}${analysis.required_skills.length > 4 ? '…' : ''}</span>`);
+    if (analysis.location) details.push(`<span class="insight-chip">Area: ${safeText(analysis.location)}${analysis.location_matched ? '' : ' · no exact area listing'}</span>`);
+    if (analysis.urgency === 'urgent') details.push('<span class="insight-chip urgency-chip">Time-sensitive request</span>');
+    understanding.innerHTML = details.length ? `<strong>We picked up</strong>${details.join('')}` : '';
+    understanding.hidden = details.length === 0;
     results.innerHTML = `<p class="match-message">${safeText(result.message)}</p>` + result.matches.map((provider) => `
       <article class="match-card">
-        <span class="tag">${safeText(provider.category)}</span>
+        <div class="match-card-top"><span class="tag">${safeText(provider.category)}</span><span class="availability ${safeAttribute(availabilityClass(provider.availability))}">${safeText(availabilityLabel(provider.availability))}</span></div>
         <h3><a class="provider-link" href="/providers/${provider.id}">${safeText(provider.name)}</a></h3>
         <p>Serving ${safeText(provider.area)}</p>
-        <div class="match-score">Text similarity: ${Math.round(provider.score * 100)}% <span>(not a probability)</span></div>
-        <div class="match-reason">Matched on: ${safeText(provider.reasons.join(', ') || provider.category)}</div>
-        <button class="request-button" data-provider-id="${provider.id}">Request service →</button>
+        ${provider.is_sample ? '<span class="sample-label">Synthetic demo provider · not a real business</span>' : ''}
+        <div class="match-score">Listing fit: ${Math.round(provider.score * 100)}% <span>(not a probability or provider rating)</span></div>
+        <ul class="match-reasons">${provider.reasons.map((reason) => `<li>${safeText(reason)}</li>`).join('')}</ul>
+        <details class="match-breakdown"><summary>See match factors</summary><div>${Object.entries(provider.feature_scores || {}).filter(([, score]) => score !== null).map(([name, score]) => `<span>${safeText(name)} <strong>${Math.round(score * 100)}%</strong></span>`).join('')}</div><p>These are component signals combined into a listing-fit score. Availability is profile-stated.</p></details>
+        ${provider.is_sample ? '<button class="request-button" disabled title="Synthetic demo profiles do not accept requests">Demo profile · requests disabled</button>' : `<button class="request-button" data-provider-id="${provider.id}">Request service →</button>`}
       </article>`).join('');
     results.querySelectorAll('.request-button').forEach((matchButton) => {
       matchButton.addEventListener('click', async () => {
@@ -317,6 +339,7 @@ async function editProviderProfile() {
       <label>Business phone<input name="phone" required minlength="7" maxlength="20" value="${safeAttribute(provider.phone)}"></label>
       <label>Description<textarea name="description" maxlength="1000" rows="3">${safeText(provider.description)}</textarea></label>
       <label>Skills<input name="skills" maxlength="500" value="${safeAttribute(provider.skills)}"></label>
+      <label>Current availability<select name="availability">${['Not specified', 'Available', 'Busy', 'Unavailable'].map((status) => `<option ${status === (provider.availability || 'Not specified') ? 'selected' : ''}>${status}</option>`).join('')}</select></label>
       <p class="form-message" role="status"></p><button class="button button-dark" type="submit">Save listing</button></form>`;
     details.querySelector('form').addEventListener('submit', async (event) => {
       event.preventDefault();

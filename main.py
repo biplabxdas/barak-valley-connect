@@ -35,6 +35,9 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 SITE_OPERATOR_NAME = os.getenv("SITE_OPERATOR_NAME", "Website owner (not set)")
 PRIVACY_CONTACT_EMAIL = os.getenv("PRIVACY_CONTACT_EMAIL", "privacy contact not set")
 REQUEST_RETENTION_DAYS = os.getenv("REQUEST_RETENTION_DAYS", "30")
+DEMO_PROVIDERS_ENABLED = os.getenv(
+    "DEMO_PROVIDERS_ENABLED", "true" if APP_ENV == "production" else "false"
+).strip().lower() == "true"
 
 
 class Database:
@@ -103,7 +106,9 @@ def initialize_database() -> None:
             description TEXT NOT NULL DEFAULT '', skills TEXT NOT NULL DEFAULT '',
             account_id {provider_ref} REFERENCES accounts(id),
             category_id {provider_ref} REFERENCES service_categories(id),
-            is_sample {sample_type})""")
+            is_sample {sample_type},
+            availability TEXT NOT NULL DEFAULT 'Not specified'
+                CHECK(availability IN ('Available', 'Busy', 'Unavailable', 'Not specified')))""")
         db.execute(f"""CREATE TABLE IF NOT EXISTS service_requests (
             id {request_id}, customer_name TEXT NOT NULL, customer_phone TEXT NOT NULL,
             service_id {provider_ref} NOT NULL REFERENCES providers(id), details TEXT NOT NULL,
@@ -125,6 +130,7 @@ def initialize_database() -> None:
                 "account_id": f"{provider_ref} REFERENCES accounts(id)",
                 "category_id": f"{provider_ref} REFERENCES service_categories(id)",
                 "is_sample": sample_type,
+                "availability": "TEXT NOT NULL DEFAULT 'Not specified' CHECK(availability IN ('Available', 'Busy', 'Unavailable', 'Not specified'))",
             },
             "service_requests": {
                 "customer_id": f"{provider_ref} REFERENCES accounts(id)",
@@ -166,11 +172,25 @@ def initialize_database() -> None:
         count = db.execute("SELECT COUNT(*) AS total FROM providers").fetchone()["total"]
         if count == 0 and APP_ENV != "production" and not DATABASE_URL:
             db.executemany(
-                "INSERT INTO providers (name, category, area, phone, is_sample) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO providers (name, category, area, phone, is_sample, availability) VALUES (?, ?, ?, ?, ?, ?)",
                 [
-                    ("Riya's Home Repair", "Home repair", "Silchar", "9876500001", True),
-                    ("Green Leaf Garden Care", "Gardening", "Silchar", "9876500002", True),
-                    ("QuickFix Electricals", "Electrical", "Silchar", "9876500003", True),
+                    ("Riya's Home Repair", "Home repair", "Silchar", "0000000001", True, "Available"),
+                    ("Green Leaf Garden Care", "Gardening", "Silchar", "0000000002", True, "Available"),
+                    ("QuickFix Electricals", "Electrical", "Silchar", "0000000003", True, "Available"),
+                ],
+            )
+        elif count == 0 and DEMO_PROVIDERS_ENABLED:
+            db.executemany(
+                """INSERT INTO providers
+                   (name, category, area, phone, description, skills, is_sample, availability)
+                   VALUES (?, ?, ?, ?, ?, ?, TRUE, ?)""",
+                [
+                    ("QuickFix Electrical Demo", "Electrical", "Silchar", "0000000001", "Synthetic demo profile for household electrical work, ceiling fans, lights and wiring.", "fan repair, wiring, switches, light fitting", "Available"),
+                    ("Barak Plumbing Demo", "Plumbing", "Tarapur", "0000000002", "Synthetic demo profile for leaking pipes, taps, drains and bathroom or kitchen fittings.", "pipe fitting, tap repair, faucet leak, drain cleaning", "Available"),
+                    ("Green Leaf Garden Demo", "Gardening", "Sonai Road", "0000000003", "Synthetic demo profile for lawn and garden care, trimming and planting.", "grass cutting, hedge trimming, pruning, planting", "Busy"),
+                    ("TidyNest Cleaning Demo", "Cleaning", "Malugram", "0000000004", "Synthetic demo profile for home and small office cleaning.", "deep cleaning, dusting, mopping, vacuuming", "Available"),
+                    ("Valley Woodcraft Demo", "Carpentry", "Silchar", "0000000005", "Synthetic demo profile for furniture, cabinets, doors and shelves.", "woodwork, cabinet repair, furniture assembly, shelving", "Unavailable"),
+                    ("Neighbourhood Home Repair Demo", "Home repair", "Udharbond", "0000000006", "Synthetic demo profile for small household repairs and maintenance.", "door repair, wall patching, handyman services", "Available"),
                 ],
             )
         # Seeded demo providers are inserted after the first migration pass.
@@ -257,6 +277,7 @@ class ProviderInput(AppModel):
     phone: str = Field(min_length=7, max_length=20)
     description: str = Field(default="", max_length=1000)
     skills: str = Field(default="", max_length=500)
+    availability: Literal["Available", "Busy", "Unavailable", "Not specified"] = "Not specified"
 
 
 class AccountRegistration(AppModel):
@@ -269,6 +290,7 @@ class AccountRegistration(AppModel):
     area: str | None = Field(default=None, min_length=2, max_length=80)
     description: str = Field(default="", max_length=1000)
     skills: str = Field(default="", max_length=500)
+    availability: Literal["Available", "Busy", "Unavailable", "Not specified"] = "Not specified"
 
 
 class AccountLogin(AppModel):
@@ -363,15 +385,21 @@ def enforce_rate_limit(request: Request, *, action: str, limit: int, window_seco
     window_start = now - (now % window_seconds)
     with connect_db() as db:
         db.execute("DELETE FROM rate_limit_buckets WHERE window_start < ?", (now - 86400,))
-        row = db.execute(
-            """INSERT INTO rate_limit_buckets AS current_bucket
-                  (bucket_key, action, window_start, request_count)
-               VALUES (?, ?, ?, 1)
-               ON CONFLICT(bucket_key, action, window_start)
-               DO UPDATE SET request_count = current_bucket.request_count + 1
-               RETURNING current_bucket.request_count AS request_count""",
-            (bucket_key, action, window_start),
-        ).fetchone()
+        if db.is_postgres:
+            upsert_sql = """INSERT INTO rate_limit_buckets AS current_bucket
+                (bucket_key, action, window_start, request_count)
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(bucket_key, action, window_start)
+                DO UPDATE SET request_count = current_bucket.request_count + 1
+                RETURNING current_bucket.request_count AS request_count"""
+        else:
+            upsert_sql = """INSERT INTO rate_limit_buckets
+                (bucket_key, action, window_start, request_count)
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(bucket_key, action, window_start)
+                DO UPDATE SET request_count = rate_limit_buckets.request_count + 1
+                RETURNING request_count"""
+        row = db.execute(upsert_sql, (bucket_key, action, window_start)).fetchone()
         request_count = row["request_count"]
     if request_count > limit:
         raise HTTPException(status_code=429, detail=detail)
@@ -463,10 +491,10 @@ def register_account(payload: AccountRegistration, request: Request):
             category_id = db.execute("SELECT id FROM service_categories WHERE name = ?", (category,)).fetchone()["id"]
             db.execute(
                 """INSERT INTO providers
-                   (name, category, area, phone, description, skills, account_id, category_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (name, category, area, phone, description, skills, account_id, category_id, availability)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (payload.display_name.strip(), category, payload.area.strip(), payload.phone.strip(),
-                 payload.description.strip(), payload.skills.strip(), account_id, category_id),
+                 payload.description.strip(), payload.skills.strip(), account_id, category_id, payload.availability),
             )
         account = public_account(db.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone())
     request.session.clear()
@@ -523,7 +551,7 @@ def list_providers(
 
 
 def provider_response(row: dict, include_phone: bool = False) -> dict:
-    fields = ["id", "name", "category", "area", "description", "skills", "category_id", "is_sample"]
+    fields = ["id", "name", "category", "area", "description", "skills", "category_id", "is_sample", "availability"]
     if include_phone:
         fields.append("phone")
     return {field: row[field] for field in fields if field in row}
@@ -553,20 +581,29 @@ def get_provider(provider_id: int, request: Request):
 
 @app.post("/api/recommendations")
 def recommend_providers(payload: RecommendationInput, request: Request):
-    """Rank current public listings against a short request using TF-IDF similarity."""
+    """Explain how current provider listings fit a short natural-language requirement."""
     enforce_rate_limit(request, action="recommendations", limit=60, window_seconds=900,
                        detail="Too many searches. Please try again in a few minutes.")
     with connect_db() as db:
         rows = [dict(row) for row in db.execute(
-            "SELECT id, name, category, area, description, skills FROM providers ORDER BY name"
+            "SELECT id, name, category, area, description, skills, availability, is_sample FROM providers ORDER BY name"
         ).fetchall()]
 
     if not rows:
-        return {"matches": [], "message": "There are no provider listings to match yet."}
+        from query_understanding import understand_requirement
+
+        return {
+            "matches": [],
+            "analysis": understand_requirement(payload.description, []),
+            "message": "There are no provider listings to match yet.",
+        }
 
     matches = rank_providers(payload.description, rows)
-    message = "These listings share words with your request. Check the details before contacting a provider." if matches else "I couldn't find a close match in the current listings. Try another description or browse all services."
-    return {"matches": matches, "message": message}
+    from query_understanding import understand_requirement
+
+    analysis = understand_requirement(payload.description, rows)
+    message = "Ranked using your service details, requested area, and each listing’s stated availability. Scores describe listing fit, not provider quality." if matches else "I couldn't find a relevant provider in the current listings. Try another description or browse all services."
+    return {"matches": matches, "analysis": analysis, "message": message}
 
 
 @app.post("/api/providers", status_code=201)
@@ -575,10 +612,10 @@ def create_provider(provider: ProviderInput, _: None = Depends(require_admin)):
         category_id = ensure_category(db, provider.category.strip())
         cursor = db.execute(
             """INSERT INTO providers
-               (name, category, area, phone, description, skills, category_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+               (name, category, area, phone, description, skills, category_id, availability)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (provider.name.strip(), provider.category.strip(), provider.area.strip(), provider.phone.strip(),
-             provider.description.strip(), provider.skills.strip(), category_id),
+             provider.description.strip(), provider.skills.strip(), category_id, provider.availability),
         )
         provider_id = cursor.fetchone()["id"]
         return dict(db.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone())
@@ -590,9 +627,9 @@ def update_provider(provider_id: int, provider: ProviderInput, _: None = Depends
         category_id = ensure_category(db, provider.category.strip())
         cursor = db.execute(
             """UPDATE providers SET name = ?, category = ?, area = ?, phone = ?,
-               description = ?, skills = ?, category_id = ? WHERE id = ?""",
+               description = ?, skills = ?, category_id = ?, availability = ? WHERE id = ?""",
             (provider.name.strip(), provider.category.strip(), provider.area.strip(), provider.phone.strip(),
-             provider.description.strip(), provider.skills.strip(), category_id, provider_id),
+             provider.description.strip(), provider.skills.strip(), category_id, provider.availability, provider_id),
         )
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Provider not found")
@@ -633,9 +670,9 @@ def update_my_provider_profile(provider: ProviderInput, request: Request):
         category_id = ensure_category(db, provider.category.strip())
         db.execute(
             """UPDATE providers SET name = ?, category = ?, area = ?, phone = ?,
-               description = ?, skills = ?, category_id = ? WHERE id = ?""",
+               description = ?, skills = ?, category_id = ?, availability = ? WHERE id = ?""",
             (provider.name.strip(), provider.category.strip(), provider.area.strip(), provider.phone.strip(),
-             provider.description.strip(), provider.skills.strip(), category_id, existing["id"]),
+             provider.description.strip(), provider.skills.strip(), category_id, provider.availability, existing["id"]),
         )
         return provider_response(dict(db.execute("SELECT * FROM providers WHERE id = ?", (existing["id"],)).fetchone()), include_phone=True)
 
@@ -665,9 +702,11 @@ def create_request(payload: RequestInput, request: Request):
         customer_phone = payload.customer_phone
     with connect_db() as db:
         cleanup_expired_requests(db)
-        provider = db.execute("SELECT id FROM providers WHERE id = ?", (payload.service_id,)).fetchone()
+        provider = db.execute("SELECT id, is_sample FROM providers WHERE id = ?", (payload.service_id,)).fetchone()
         if provider is None:
             raise HTTPException(status_code=404, detail="Provider not found")
+        if APP_ENV == "production" and provider["is_sample"]:
+            raise HTTPException(status_code=409, detail="Synthetic demonstration listings cannot receive real service requests.")
         db.execute(
             """INSERT INTO service_requests
                (customer_name, customer_phone, service_id, details, customer_id)

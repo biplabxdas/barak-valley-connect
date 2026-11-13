@@ -1,182 +1,121 @@
 # Barak Valley Connect
 
-A local services platform for finding providers in Silchar and submitting service requests.
+Barak Valley Connect is a local services directory for Silchar and nearby areas. Customers can describe a job in plain language and see explainable provider recommendations based on listing text, required skills, service category, requested area, and provider-stated availability.
 
-## What it does
+The recommendation engine is a deterministic information-retrieval system. It uses TF-IDF, cosine similarity, curated service vocabulary, and structured signals. It is not a generative AI chatbot, trained language model, endorsement, or probability estimate.
 
-- Browse and search providers by category, area, business name, description, and skills.
-- Open a profile page for each provider.
-- Describe a job in plain language and receive up to three ranked provider suggestions with a similarity score and matching words.
-- Register as a customer or service provider. Customers can review their requests; providers can edit their own listing and view requests for it.
-- Submit a request as a guest or signed-in customer. The website owner can manage listings, requests, and private CSV backups.
+## Features
 
-Local demo listings are marked **Sample listing · local demo data**. Production starts with an empty directory.
+- Browse and filter providers by service category, area, and text.
+- Create customer and provider accounts with role-scoped access.
+- Let providers edit their own public listing and stated availability.
+- Analyze service descriptions for likely category, skills, area, and urgency.
+- Rank current database listings and explain the signals behind each result.
+- Mark synthetic demonstration profiles clearly; production demo profiles cannot receive real service requests.
+- Submit consent-based service requests to real provider listings and view account history.
+- Use the website owner area to manage listings and requests.
+- Run locally with SQLite or in production with PostgreSQL.
 
-## Stack
+## Project layout
 
-- Python, FastAPI, Pydantic, and psycopg
-- HTML, CSS, and vanilla JavaScript
-- SQLite locally; PostgreSQL when `DATABASE_URL` is set
-- TF-IDF and cosine similarity implemented in `matcher.py` using the Python standard library
+```text
+main.py                     FastAPI routes, validation, auth, database and migrations
+matcher.py                  TF-IDF text similarity and feature-based ranking
+query_understanding.py       Local vocabulary parser for category, skills, area and urgency
+static/index.html            Main directory and recommendation interface
+static/app.js                Frontend API calls, search, accounts and request flows
+static/provider.html         Provider profile page
+static/provider.js           Provider profile API integration
+static/styles.css            Main and responsive styles
+static/management.css        Account, owner and profile styles
+test_matcher.py              Offline NLP and ranking tests
+test_api.py                  FastAPI workflows using an isolated SQLite database
+render.yaml                  Render web service and PostgreSQL Blueprint
+requirements.txt             Runtime dependencies
+requirements-test.txt        Runtime plus automated test dependencies
+```
 
-## Run locally
+## Run on macOS
 
-1. Install Python 3.11 or later.
-2. From the project folder, create and activate a virtual environment:
+Use Python 3.11 or later. From this folder:
 
-   ```sh
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
+```
 
-3. Install app dependencies:
+Set a private local `ADMIN_PASSWORD` and a random `SESSION_SECRET` in `.env`. Keep `DATABASE_URL` blank to use SQLite. Start the app:
 
-   ```sh
-   python -m pip install -r requirements.txt
-   ```
+```sh
+python -m uvicorn main:app --reload
+```
 
-4. Copy `.env.example` to `.env`. Set a local `ADMIN_PASSWORD` and a long random `SESSION_SECRET`. Leave `DATABASE_URL` blank for SQLite. To use PostgreSQL, set it to a private connection URL.
-5. Start the app:
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The local directory is seeded with three clearly marked synthetic listings. A local listing exists only to make development and recommendation demonstrations possible.
 
-   ```sh
-   python -m uvicorn main:app --reload
-   ```
-
-6. Open http://127.0.0.1:8000. The local database creates clearly labeled sample listings. The **Sign in / Create account** button lets you register a customer or provider. The owner signs in separately with `ADMIN_PASSWORD`.
-
-For the automated checks, install test dependencies and run the suite:
+To run the automated tests:
 
 ```sh
 python -m pip install -r requirements-test.txt
 python -m unittest -v
 ```
 
-## Architecture
+## Architecture and data
+
+`static/app.js` sends same-origin JSON requests to the FastAPI routes in `main.py`. Pydantic models validate request bodies. FastAPI uses signed, HTTP-only session cookies and role checks for customer, provider, and owner actions. Database access goes through `connect_db()`, which uses SQLite locally and PostgreSQL when `DATABASE_URL` is set.
+
+The database stores accounts, service categories, providers, service requests, and shared rate-limit counters. Providers include category, service area, description, skills, sample-data flag, and provider-stated availability (`Available`, `Busy`, `Unavailable`, or `Not specified`). Existing databases receive the availability field through an additive startup migration. A legacy listing defaults to `Not specified` rather than being assumed available. PostgreSQL startup uses an advisory lock to avoid concurrent schema changes.
+
+The public recommendation request is not stored. Provider descriptions and skills used for matching come from the configured database. Service-request details are stored only after explicit consent and are removed according to `REQUEST_RETENTION_DAYS`.
+
+## Recommendation flow
+
+1. The browser sends a short description to `POST /api/recommendations`.
+2. `query_understanding.py` uses a local service vocabulary, stop words, curated synonym expansions, provider areas, and simple urgency terms to identify likely category, useful skill terms, a known area, and whether the request sounds urgent. It can correct close spellings using the provider directory vocabulary.
+3. `main.py` loads actual public listing fields from PostgreSQL or SQLite and passes them to `matcher.rank_providers()`.
+4. `matcher.py` compares TF-IDF text similarity and skill overlap, then adds category, exact known-area, and stated-availability signals when the request provides those details. Urgency increases the importance of availability. Weights are normalized if no category or known area was found.
+5. The API returns the parsed request, a weighted listing-fit score, component signals, and plain-language reasons. The UI shows the interpreted request and match factors.
+
+Default signal weights are text 0.40, skills 0.28, category 0.16, area 0.10, and availability 0.06. For urgent requests they are text 0.33, skills 0.27, category 0.16, area 0.10, and availability 0.14. Missing category or area signals are omitted and the remaining weights are normalized. An unavailable profile can still appear when its service is relevant, but its availability signal lowers its rank and is shown to the user.
+
+TF-IDF uses a smoothed inverse document frequency:
 
 ```text
-Browser (static/index.html, app.js, styles.css)
-        │ fetch + JSON / signed session cookie
-        ▼
-FastAPI routes (main.py) ─────── matcher.py (TF-IDF + cosine ranking)
-        │ parameterized SQL
-        ▼
-SQLite for local development / PostgreSQL when DATABASE_URL is set
+idf(t) = ln((N + 1) / (df(t) + 1)) + 1
 ```
 
-The browser renders provider cards and sends search, account, request, and matching
-operations to FastAPI. FastAPI validates incoming JSON with Pydantic, applies role
-checks for private operations, and reads or writes provider/account/request rows.
-For matching, it loads the current provider records and passes their public listing
-text to `matcher.py`; no customer query is stored by the recommendation endpoint.
-The same application SQL is used for SQLite and PostgreSQL through a small adapter.
+Cosine similarity measures the angle between query and listing term vectors. The displayed composite score is a fit estimate for the current listings, not a probability, provider quality rating, or endorsement. Results below a relevance threshold are omitted; no-match and empty-directory states are handled explicitly.
+
+The parser is intentionally local and inspectable. It does not understand all sentence meanings, arbitrary synonyms, or every language, and availability is self-reported rather than live scheduling data. Recommendation quality should be evaluated against consented, human-labeled queries before use in consequential decisions.
 
 ## API overview
 
-Interactive API documentation is available at `/docs` when the app is running.
-Authentication uses the signed, HTTP-only session cookie set by the login endpoints.
+Interactive schema: `/docs`.
 
-| Method and path | Access | Purpose |
-| --- | --- | --- |
-| `GET /health` | Public | Health check including database connectivity |
-| `GET /api/auth/me` | Public | Return the current session state |
-| `POST /api/auth/register` | Public, rate limited | Register customer or provider; creates a provider listing for provider roles |
-| `POST /api/auth/login` / `POST /api/auth/logout` | Public | Sign in or clear the account session |
-| `POST /api/auth/admin-login` / `POST /api/auth/admin-logout` | Public | Sign in or clear the website owner session |
-| `GET /api/categories` | Public | List categories that have providers |
-| `GET /api/providers?category=&area=&q=` | Public | Browse/search listings; phone numbers are hidden |
-| `GET /api/providers/{id}` | Public; owner/listing owner may see phone | View a provider profile |
-| `POST /api/recommendations` | Public, rate limited | Rank live listings against a short natural-language request |
-| `POST /api/requests` | Public, rate limited | Submit a request with explicit privacy consent |
-| `GET /api/my/requests` | Customer | View requests owned by the signed-in customer |
-| `GET /api/provider/profile` / `PUT /api/provider/profile` | Provider | Read or update only the signed-in provider's listing |
-| `GET /api/provider/requests` | Provider | View requests for only that provider's listing, including contact needed to respond |
-| `GET /api/requests`, `PATCH /api/requests/{id}/status`, `DELETE /api/requests/{id}` | Website owner | Manage service requests |
-| `GET /api/summary`, `GET /api/admin/requests.csv` | Website owner | View counts or download a private CSV backup |
-| `POST /api/providers`, `PUT /api/providers/{id}`, `DELETE /api/providers/{id}` | Website owner | Manage directory listings |
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | Checks application and database connectivity |
+| GET | `/api/providers` | Browse and filter current provider listings |
+| GET | `/api/categories` | List categories that have providers |
+| GET | `/api/providers/{id}` | Read a public profile; phone remains private |
+| POST | `/api/recommendations` | Analyze a requirement and rank actual provider rows |
+| POST | `/api/auth/register` | Register a customer or provider account |
+| GET/PUT | `/api/provider/profile` | Read or update the signed-in provider's own profile |
+| POST | `/api/requests` | Submit a request with explicit privacy consent |
+| GET | `/api/my/requests` | View the signed-in customer's own requests |
+| GET | `/api/provider/requests` | View requests for the signed-in provider's listing |
 
-## How provider matching works
+Owner management routes require the owner session. Public provider responses never include phone numbers.
 
-1. The app tokenizes the requirement and each current listing into lowercase words,
-   removing common and overly generic words. A small curated synonym map handles
-   local-service vocabulary such as `faucet`/`tap` and `hedges`/`pruning`; a
-   conservative close-word correction handles common typos.
-2. It builds a term-frequency vector for the query and each listing. Each term is
-   weighted with smoothed inverse document frequency:
-   `idf(t) = ln((N + 1) / (df(t) + 1)) + 1`. A term that distinguishes one listing
-   matters more than a word present in every listing.
-3. It normalizes the vectors and computes cosine similarity:
-   `cos(q, d) = (q · d) / (||q|| × ||d||)`. Results below the implementation's
-   minimum relevance threshold are omitted; remaining rows are sorted by score and
-   name, and the top three are returned with overlapping terms as explanations.
+## Synthetic demonstration providers
 
-The displayed score is text similarity on this current directory, not a probability,
-quality rating, or endorsement. This baseline does not understand sentence meaning,
-language beyond its English vocabulary, availability, distance, price, or provider
-quality. Keep provider descriptions and skills accurate; add synonyms only when they
-reflect real service vocabulary, and verify ranking changes with the API query cases.
+When the production provider directory is empty, the app inserts six synthetic listings across common local-service categories. Each is marked in the UI and database as a synthetic demo profile; their phone values are non-contact placeholders. Seeding is idempotent and runs only when there are no listings. Set `DEMO_PROVIDERS_ENABLED=false` to disable production demo seeding. Synthetic listings cannot receive service requests in production. Do not present them as real businesses or users.
 
-## Interview walkthrough
+## Render deployment
 
-Describe the project as a small full-stack marketplace with a transparent retrieval
-baseline. A customer submits a short requirement; the FastAPI endpoint validates it,
-loads actual provider listings from the database, then uses TF-IDF to represent query
-and listing text and cosine similarity to rank them. The interface shows the score
-and matched terms, and the API returns a clear no-match response when nothing clears
-the threshold. You can explain the tradeoff: this is inexpensive, deterministic, and
-inspectable for a small directory, but it misses semantic equivalence; a future
-evaluation could compare this baseline with a multilingual embedding model using
-human-labeled query/provider relevance pairs. Scores must not be described as
-confidence or probabilities.
+`render.yaml` describes the current Python web service and same-region PostgreSQL resource. The web process binds to `0.0.0.0:$PORT`; `/health` runs a database `SELECT 1`. Render gets `DATABASE_URL` from the private database connection. Set the private owner password and privacy contact through Render's environment settings; never put them in Git.
 
-The checks cover customer/provider registration and login, role-scoped endpoints,
-profile updates, category filters, request creation and history, SQLite persistence
-after reopening the app, additive migration safety, security headers and production
-configuration validation. Thirty-six realistic provider-matching queries use rows in
-an isolated test database; the cases include common spelling variations, curated
-synonyms and unrelated requests that should return no suggestions.
+Required production values are `APP_ENV=production`, `DATABASE_URL`, `SESSION_SECRET` (at least 32 characters), `ADMIN_PASSWORD` (at least 16 characters), `SITE_OPERATOR_NAME`, `PRIVACY_CONTACT_EMAIL`, and positive `REQUEST_RETENTION_DAYS`. `DEMO_PROVIDERS_ENABLED` defaults to true only in production and can be explicitly disabled.
 
-## Data and privacy
-
-The database contains `accounts`, `service_categories`, `providers`, `service_requests`, and `rate_limit_buckets`. Provider categories and customer requests link through database IDs. Startup creates missing tables and applies the current additive column migrations; PostgreSQL startup workers serialize this step with a transaction-scoped advisory lock. Rate limits use an atomic database upsert, so limits are shared across workers and survive app restarts. Fixed windows can allow a short burst across a window boundary.
-
-Passwords are stored as PBKDF2 hashes. Public listings do not show provider phone numbers. The matching request is processed by this app, is not saved, and is not sent to an outside AI service. The privacy page explains which account and service-request details are stored and who can view them.
-
-## Deployment
-
-`render.yaml` defines both the Python web service and a PostgreSQL resource in Singapore. Its `DATABASE_URL` references the database's private connection string, and the database allowlist blocks external connections. The database is created only when you create or sync this Blueprint in Render; editing this file or pushing the branch does not provision it. Production startup rejects SQLite URLs and `/health` checks the database connection.
-
-For a Render launch, first review the PostgreSQL plan and billing shown in Render before syncing the Blueprint. The Blueprint currently omits a database plan, so Render applies its default plan for a new database. Confirm these environment variables in Render's private settings:
-
-- `APP_ENV=production`
-- `DATABASE_URL`: automatically supplied from the Blueprint database resource; for an existing external database instead, change this to a private `sync: false` value and remove or reuse the declared database resource before syncing
-- `SESSION_SECRET`: at least 32 random characters; the blueprint requests a generated value
-- `ADMIN_PASSWORD`: at least 16 characters
-- `SITE_OPERATOR_NAME` and `PRIVACY_CONTACT_EMAIL`: real contact details for the privacy notice
-- `REQUEST_RETENTION_DAYS`: positive integer, such as `30`
-
-The service build command is `pip install -r requirements.txt`, the start command is `uvicorn main:app --host 0.0.0.0 --port $PORT`, and Render checks `/health`. After configuring contacts and the owner password and approving the database plan, verify `/health`, account registration/login, provider listing, matching, and request persistence against PostgreSQL. Do not put database URLs or passwords in Git.
-
-The account and matching changes are on the `codex/final-barak-valley-connect` branch and in draft PR #2. They have not been merged or deployed. The existing live URL may still be running the previous version. PostgreSQL and Render deployment should be checked with the intended private connection settings before publishing.
-
-## Current limits
-
-The matcher is a small information-retrieval baseline. It uses word overlap,
-curated category vocabulary, a small synonym map, conservative close-spelling
-correction, TF-IDF, and cosine similarity. Its score is not a probability or an
-endorsement. It does not understand sentence meaning, and it can miss unlisted
-synonyms, complex misspellings, and multilingual requests. Matching quality depends
-on providers maintaining useful descriptions and skills. Provider accounts are not
-email-verified, and the app does not include password recovery, payments, or
-automatic email/SMS notifications.
-
-Rate-limit counters use an HMAC keyed by the session secret rather than storing raw
-IP addresses. Counters are removed within 24 hours. Use a stable, private session
-secret in production so rate limits remain consistent across app workers. The local
-verification uses SQLite and an isolated test database. A live PostgreSQL connection,
-physical mobile device, and deployed Render service were not available for this check,
-so those environments remain unverified. The current changes are in draft PR #2 and
-have not been deployed.
-
-Schema creation and additive upgrades currently run at startup; they are not tracked
-by a versioned migration tool and do not provide automatic rollback. Back up an
-existing database before production upgrades and review schema changes before release.
+The currently configured demo site is [barak-valley-connect-33ic.onrender.com](https://barak-valley-connect-33ic.onrender.com). Its free PostgreSQL resource is temporary and expires on the platform's free-plan schedule; use durable, backed-up PostgreSQL before relying on it for real customer records. The older service was left untouched. Changes are on `codex/final-barak-valley-connect`; they are not merged into `main`.

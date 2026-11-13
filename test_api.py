@@ -120,6 +120,7 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(len(response.json()), 3)
         self.assertNotIn("phone", response.json()[0])
         self.assertTrue(all(provider["is_sample"] for provider in response.json()))
+        self.assertTrue(all(provider["availability"] == "Available" for provider in response.json()))
         categories = self.client.get("/api/categories")
         self.assertEqual({item["name"] for item in categories.json()}, {"Home repair", "Gardening", "Electrical"})
         profile = self.client.get(f"/api/providers/{response.json()[0]['id']}")
@@ -159,7 +160,7 @@ class ApiIntegrationTests(unittest.TestCase):
                 provider_columns = {row[1] for row in connection.execute("PRAGMA table_info(providers)")}
                 request_columns = {row[1] for row in connection.execute("PRAGMA table_info(service_requests)")}
                 index_names = {row[1] for row in connection.execute("PRAGMA index_list(service_requests)")}
-            self.assertTrue({"description", "skills", "account_id", "category_id", "is_sample"} <= provider_columns)
+            self.assertTrue({"description", "skills", "account_id", "category_id", "is_sample", "availability"} <= provider_columns)
             self.assertIn("customer_id", request_columns)
             self.assertIn("idx_requests_customer_created", index_names)
         finally:
@@ -172,10 +173,50 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["matches"][0]["name"], "QuickFix Electricals")
-        self.assertIn("fan", data["matches"][0]["reasons"])
+        self.assertTrue(any("fan" in reason for reason in data["matches"][0]["reasons"]))
         self.assertGreater(data["matches"][0]["score"], 0)
         self.assertLessEqual(data["matches"][0]["score"], 1)
+        self.assertIn("feature_scores", data["matches"][0])
+        self.assertEqual(data["analysis"]["category"], "Electrical")
         self.assertNotIn("phone", data["matches"][0])
+
+    def test_recommendation_extracts_category_skills_area_and_urgency(self):
+        response = self.client.post("/api/recommendations", json={
+            "description": "Urgent ceiling fan wiring in Silchar today",
+        })
+        self.assertEqual(response.status_code, 200)
+        analysis = response.json()["analysis"]
+        self.assertEqual(analysis["category"], "Electrical")
+        self.assertTrue({"fan", "wiring"} <= set(analysis["required_skills"]))
+        self.assertEqual(analysis["location"], "Silchar")
+        self.assertTrue(analysis["location_matched"])
+        self.assertEqual(analysis["urgency"], "urgent")
+
+    def test_synthetic_providers_cannot_receive_real_production_requests(self):
+        with patch.object(main, "APP_ENV", "production"):
+            response = self.client.post("/api/requests", json={
+                "customer_name": "Test Visitor", "customer_phone": "0000000000",
+                "service_id": 1, "details": "Please repair my ceiling fan", "privacy_consent": True,
+            })
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Synthetic demonstration", response.json()["detail"])
+
+    def test_production_demo_providers_are_labeled_and_seeded_once(self):
+        demo_path = Path(_TEMP_DIR.name) / "production-demo.db"
+        demo_path.unlink(missing_ok=True)
+        with patch.multiple(
+            main, APP_ENV="production", DATABASE_URL="", DB_PATH=demo_path,
+            DEMO_PROVIDERS_ENABLED=True,
+        ):
+            main.initialize_database()
+            main.initialize_database()
+            with main.connect_db() as db:
+                rows = db.execute("SELECT name, is_sample, availability FROM providers ORDER BY name").fetchall()
+        self.assertEqual(len(rows), 6)
+        self.assertTrue(all(row["is_sample"] for row in rows))
+        self.assertIn("Unavailable", {row["availability"] for row in rows})
+        self.assertIn("Busy", {row["availability"] for row in rows})
+        demo_path.unlink(missing_ok=True)
 
     def test_realistic_queries_rank_database_providers_and_reject_unrelated_requests(self):
         provider_rows = [
@@ -244,7 +285,7 @@ class ApiIntegrationTests(unittest.TestCase):
         too_long = self.client.post("/api/recommendations", json={"description": "x" * 301})
         self.assertEqual(unmatched.status_code, 200)
         self.assertEqual(unmatched.json()["matches"], [])
-        self.assertIn("couldn't find a close match", unmatched.json()["message"])
+        self.assertIn("couldn't find a relevant provider", unmatched.json()["message"])
         self.assertEqual(invalid.status_code, 422)
         self.assertEqual(too_long.status_code, 422)
 
@@ -340,12 +381,13 @@ class ApiIntegrationTests(unittest.TestCase):
             "email": "provider@example.com", "password": "strong-provider-password",
             "role": "provider", "display_name": "Valley Wiring Works", "phone": "9876500077",
             "category": "Electrical", "area": "Silchar", "description": "Home wiring and fan repairs",
-            "skills": "fan repair, wiring, switches",
+            "skills": "fan repair, wiring, switches", "availability": "Busy",
         })
         self.assertEqual(registered.status_code, 201)
         profile = self.client.get("/api/provider/profile")
         self.assertEqual(profile.status_code, 200)
         self.assertEqual(profile.json()["skills"], "fan repair, wiring, switches")
+        self.assertEqual(profile.json()["availability"], "Busy")
         service_request = self.client.post("/api/requests", json={
             "customer_name": "Test Visitor", "customer_phone": "9876500022",
             "service_id": profile.json()["id"], "details": "Please fix a ceiling fan", "privacy_consent": True,
