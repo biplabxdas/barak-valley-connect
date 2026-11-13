@@ -745,6 +745,25 @@ def list_provider_requests(request: Request):
         return [dict(row) for row in rows]
 
 
+@app.patch("/api/provider/requests/{request_id}/status")
+def update_provider_request_status(request_id: int, update: StatusInput, request: Request):
+    account = require_account(request, ("provider",))
+    with connect_db() as db:
+        cursor = db.execute(
+            """UPDATE service_requests SET status = ?
+               WHERE id = ? AND service_id IN (
+                   SELECT id FROM providers WHERE account_id = ?
+               )""",
+            (update.status, request_id, account["id"]),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Service request not found")
+        row = db.execute(
+            "SELECT id, status FROM service_requests WHERE id = ?", (request_id,)
+        ).fetchone()
+        return dict(row)
+
+
 @app.get("/api/requests")
 def list_requests(_: None = Depends(require_admin)):
     with connect_db() as db:

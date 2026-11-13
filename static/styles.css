@@ -15,3 +15,5 @@
 /* Keep provider cards and long demo labels inside tablet and phone viewports. */
 @media(max-width:900px){.provider-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.provider-card{min-width:0;overflow-wrap:anywhere}}
 .provider-card .sample-label{max-width:100%;width:fit-content;white-space:normal;overflow-wrap:anywhere}
+
+.provider-request-status{display:flex;align-items:center;gap:8px;margin-top:10px;color:var(--muted);font-size:11px}.provider-request-status select{border:1px solid var(--line);border-radius:7px;padding:6px;background:#fff;font:12px 'DM Sans',sans-serif}.provider-status-message{display:block;min-height:1em;margin-top:4px;color:var(--green);font-size:11px}

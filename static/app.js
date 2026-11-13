@@ -323,7 +323,35 @@ async function loadAccountRequests() {
       <article class="account-request"><strong>${safeText(currentAccount.role === 'customer' ? request.provider_name : request.customer_name)}</strong>
         <span class="status ${safeText(request.status)}">${safeText(request.status)}</span>
         ${currentAccount.role === 'provider' ? `<p>Customer contact: ${safeText(request.customer_phone)}</p>` : ''}
+        ${currentAccount.role === 'provider' ? `<label class="provider-request-status">Update status
+          <select class="provider-status-control" aria-label="Update service request status" data-request-id="${request.id}" data-current-status="${safeAttribute(request.status)}">
+            ${['Pending', 'Accepted', 'Completed', 'Cancelled'].map((status) => `<option ${status === request.status ? 'selected' : ''}>${status}</option>`).join('')}
+          </select>
+        </label><span class="provider-status-message" role="status" aria-live="polite"></span>` : ''}
         <p>${safeText(request.details)}</p></article>`).join('');
+    details.querySelectorAll('.provider-status-control').forEach((control) => {
+      control.addEventListener('change', async () => {
+        const card = control.closest('.account-request');
+        const message = card.querySelector('.provider-status-message');
+        control.disabled = true;
+        message.textContent = 'Saving status…';
+        try {
+          const result = await api(`/api/provider/requests/${control.dataset.requestId}/status`, {
+            method: 'PATCH', body: JSON.stringify({ status: control.value }),
+          });
+          control.dataset.currentStatus = result.status;
+          const badge = card.querySelector('.status');
+          badge.textContent = result.status;
+          badge.className = `status ${safeText(result.status)}`;
+          message.textContent = 'Request status updated.';
+        } catch (error) {
+          control.value = control.dataset.currentStatus;
+          message.textContent = error.message;
+        } finally {
+          control.disabled = false;
+        }
+      });
+    });
   } catch (error) { details.textContent = error.message; }
 }
 

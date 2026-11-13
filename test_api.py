@@ -410,6 +410,63 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(searched.status_code, 200)
         self.assertIn("Valley Electrical Service", [row["name"] for row in searched.json()])
 
+    def test_provider_status_updates_are_role_and_listing_scoped(self):
+        provider_a = self.client.post("/api/auth/register", json={
+            "email": "provider-a@example.com", "password": "strong-provider-password",
+            "role": "provider", "display_name": "Provider A", "phone": "9876500041",
+            "category": "Electrical", "area": "Silchar", "description": "Fan wiring",
+            "skills": "fan repair, wiring", "availability": "Available",
+        })
+        self.assertEqual(provider_a.status_code, 201)
+        provider_a_id = self.client.get("/api/provider/profile").json()["id"]
+
+        with TestClient(main.app) as provider_b_client, TestClient(main.app) as customer_client, TestClient(main.app) as anonymous_client:
+            provider_b = provider_b_client.post("/api/auth/register", json={
+                "email": "provider-b@example.com", "password": "strong-provider-password",
+                "role": "provider", "display_name": "Provider B", "phone": "9876500042",
+                "category": "Plumbing", "area": "Silchar", "description": "Pipe repair",
+                "skills": "pipe repair", "availability": "Available",
+            })
+            self.assertEqual(provider_b.status_code, 201)
+            provider_b_id = provider_b_client.get("/api/provider/profile").json()["id"]
+            customer = customer_client.post("/api/auth/register", json={
+                "email": "requester@example.com", "password": "strong-customer-password",
+                "role": "customer", "display_name": "Requesting Customer", "phone": "9876500043",
+            })
+            self.assertEqual(customer.status_code, 201)
+
+            for provider_id in (provider_a_id, provider_b_id):
+                response = customer_client.post("/api/requests", json={
+                    "customer_name": "ignored", "customer_phone": "0000000000",
+                    "service_id": provider_id, "details": "Please repair this household issue",
+                    "privacy_consent": True,
+                })
+                self.assertEqual(response.status_code, 201)
+
+            request_a_id = self.client.get("/api/provider/requests").json()[0]["id"]
+            request_b_id = provider_b_client.get("/api/provider/requests").json()[0]["id"]
+            updated = self.client.patch(f"/api/provider/requests/{request_a_id}/status", json={"status": "Accepted"})
+            self.assertEqual(updated.status_code, 200)
+            self.assertEqual(updated.json(), {"id": request_a_id, "status": "Accepted"})
+            self.assertEqual(self.client.get("/api/provider/requests").json()[0]["status"], "Accepted")
+
+            self.assertEqual(
+                self.client.patch(f"/api/provider/requests/{request_b_id}/status", json={"status": "Completed"}).status_code,
+                404,
+            )
+            self.assertEqual(
+                customer_client.patch(f"/api/provider/requests/{request_a_id}/status", json={"status": "Completed"}).status_code,
+                403,
+            )
+            self.assertEqual(
+                anonymous_client.patch(f"/api/provider/requests/{request_a_id}/status", json={"status": "Completed"}).status_code,
+                401,
+            )
+            self.assertEqual(
+                self.client.patch(f"/api/provider/requests/{request_a_id}/status", json={"status": "Unknown"}).status_code,
+                422,
+            )
+
     def test_older_sqlite_database_is_migrated_without_losing_a_listing(self):
         legacy_path = Path(_TEMP_DIR.name) / "legacy.db"
         legacy_path.unlink(missing_ok=True)
