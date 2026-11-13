@@ -364,11 +364,12 @@ def enforce_rate_limit(request: Request, *, action: str, limit: int, window_seco
     with connect_db() as db:
         db.execute("DELETE FROM rate_limit_buckets WHERE window_start < ?", (now - 86400,))
         row = db.execute(
-            """INSERT INTO rate_limit_buckets (bucket_key, action, window_start, request_count)
+            """INSERT INTO rate_limit_buckets AS current_bucket
+                  (bucket_key, action, window_start, request_count)
                VALUES (?, ?, ?, 1)
                ON CONFLICT(bucket_key, action, window_start)
-               DO UPDATE SET request_count = request_count + 1
-               RETURNING request_count""",
+               DO UPDATE SET request_count = current_bucket.request_count + 1
+               RETURNING current_bucket.request_count AS request_count""",
             (bucket_key, action, window_start),
         ).fetchone()
         request_count = row["request_count"]
