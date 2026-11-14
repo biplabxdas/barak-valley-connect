@@ -43,6 +43,7 @@ test_api.py                  FastAPI workflows using an isolated SQLite database
 render.yaml                  Render web service and PostgreSQL Blueprint
 requirements.txt             Runtime dependencies
 requirements-test.txt        Runtime plus automated test dependencies
+.github/workflows/quality-checks.yml  GitHub Actions test and syntax checks
 ```
 
 ## Run on macOS
@@ -70,6 +71,8 @@ To run the automated tests:
 python -m pip install -r requirements-test.txt
 python -m unittest -v
 ```
+
+GitHub Actions also runs the same API and recommendation tests on Python 3.11 and 3.12 for the feature branch and pull requests. These checks use the isolated SQLite test database; they do not connect to production PostgreSQL.
 
 ## Architecture and data
 
@@ -141,6 +144,7 @@ Interactive schema: `/docs`.
 | POST | `/api/requests` | Submit a request with explicit privacy consent |
 | GET | `/api/my/requests` | View the signed-in customer's own requests |
 | GET | `/api/provider/requests` | View requests for the signed-in provider's listing |
+| PATCH | `/api/provider/requests/{id}/status` | Update a request attached to the signed-in provider's own listing |
 | GET/PATCH/DELETE | `/api/requests...` | Owner-only request management |
 | POST/PUT/DELETE | `/api/providers...` | Owner-only listing management |
 
