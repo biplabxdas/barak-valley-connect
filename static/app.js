@@ -418,6 +418,7 @@ document.querySelector('#account-form').addEventListener('submit', async (event)
       currentAccount = result.account;
     } catch (error) { message.textContent = error.message; return; }
   }
+  isAdmin = false;
   form.reset();
   showAccountDashboard();
   if (currentAccount.role === 'customer') {
