@@ -236,9 +236,7 @@ The current live site is [Barak Valley Connect on Render](https://barak-valley-c
 
 ## Screenshots
 
-## Screenshots
-
-These are mobile screenshots I captured from the live website.
+These are mobile screenshots of the live website.
 
 ![Barak Valley Connect homepage on mobile](docs/screenshots/homepage-mobile.png)
 
