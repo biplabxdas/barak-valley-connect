@@ -3,6 +3,7 @@ name: Application checks
 on:
   push:
     branches:
+      - main
       - codex/final-barak-valley-connect
   pull_request:
     branches:
