@@ -116,7 +116,56 @@ The database has four main data areas:
 - `providers`: listing, service category, area, skills, availability, and synthetic-demo flag.
 - `service_requests`: selected provider, customer details, request description, status, and optional signed-in customer account.
 
-A database-backed table also stores shared rate-limit counters. PostgreSQL connections are opened per operation and use parameterized queries. On startup, the app creates missing tables and applies additive column checks for older databases; this is not a versioned migration system. PostgreSQL startup uses an advisory lock around schema initialization.
+The `rate_limit_buckets` table stores shared rate-limit counters. PostgreSQL connections are opened per operation and use parameterized queries. On startup, the app creates missing tables and applies additive column checks for older databases; this is not a versioned migration system. PostgreSQL startup uses an advisory lock around schema initialization.
+
+The relationships below follow the current schema. Customer accounts are optional on a request because the database also supports requests without a signed-in customer account. The database does not enforce one provider listing per provider account with a unique constraint.
+
+```mermaid
+erDiagram
+    ACCOUNTS {
+        bigint id PK
+        text email UK
+        text role
+        text display_name
+        text phone
+        text password_hash
+    }
+    SERVICE_CATEGORIES {
+        bigint id PK
+        text name UK
+    }
+    PROVIDERS {
+        bigint id PK
+        text name
+        text category
+        bigint category_id FK
+        bigint account_id FK
+        text area
+        text skills
+        text availability
+        boolean is_sample
+    }
+    SERVICE_REQUESTS {
+        bigint id PK
+        bigint service_id FK
+        bigint customer_id FK
+        text details
+        text status
+    }
+    RATE_LIMIT_BUCKETS {
+        text bucket_key PK
+        text action PK
+        bigint window_start PK
+        integer request_count
+    }
+
+    ACCOUNTS o|--o{ PROVIDERS : manages
+    SERVICE_CATEGORIES o|--o{ PROVIDERS : classifies
+    PROVIDERS ||--o{ SERVICE_REQUESTS : receives
+    ACCOUNTS o|--o{ SERVICE_REQUESTS : submits
+```
+
+SQLite uses integer primary keys and a boolean-like integer for the demo flag; the types above show the PostgreSQL schema.
 
 ## Run locally on macOS
 
