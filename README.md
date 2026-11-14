@@ -2,7 +2,7 @@
 
 I built Barak Valley Connect as a local-services directory for Silchar and nearby areas. The idea is simple: someone who needs help with a household job should be able to find a relevant local provider, understand why that provider appeared in the results, and send a request through the site.
 
-I am a B.Tech Electrical Engineering student at NIT Silchar. I used this project to learn more about building a web application with Python, APIs, databases, and a small NLP-based recommendation system. I also used AI tools as assistants for learning, debugging, and reviewing ideas. I checked the implementation and tests as I worked; I do not claim that every line was written without help.
+I am a B.Tech Electrical Engineering student at NIT Silchar. I used this project to learn more about building a web application with Python, APIs, databases, and a small NLP-based recommendation system. I also used AI tools during development to understand concepts, debug issues, and improve parts of the project. I reviewed the suggestions and worked on understanding how the final implementation works.
 
 **Live website:** [Barak Valley Connect](https://barak-valley-connect-33ic.onrender.com)  
 **GitHub repository:** [biplabxdas/barak-valley-connect](https://github.com/biplabxdas/barak-valley-connect)
