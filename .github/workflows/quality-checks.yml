@@ -1,0 +1,51 @@
+name: Application checks
+
+on:
+  push:
+    branches:
+      - codex/final-barak-valley-connect
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests and syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-test.txt
+
+      - name: Run API and recommendation tests
+        run: python -m unittest discover -v
+
+      - name: Check Python syntax
+        run: python -m py_compile main.py matcher.py query_understanding.py test_api.py test_matcher.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check frontend syntax
+        run: |
+          node --check static/app.js
+          node --check static/provider.js

@@ -11,15 +11,25 @@ services:
       - key: APP_ENV
         value: production
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: barak-valley-connect-postgres
+          property: connectionString
       - key: SESSION_SECRET
         generateValue: true
       - key: ADMIN_PASSWORD
         sync: false
       - key: SITE_OPERATOR_NAME
-        sync: false
+        value: Barak Valley Connect
       - key: PRIVACY_CONTACT_EMAIL
         sync: false
       - key: REQUEST_RETENTION_DAYS
-        sync: false
+        value: "30"
 
+databases:
+  - name: barak-valley-connect-postgres
+    databaseName: barak_valley_connect
+    user: barak_valley_connect
+    # The free plan avoids charges but expires after 30 days. Use a paid plan for durable production data.
+    plan: free
+    region: singapore
+    ipAllowList: []

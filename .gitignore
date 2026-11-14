@@ -1,7 +1,9 @@
 .venv/
 __pycache__/
 *.py[cod]
-business.db
+*.db
+*.sqlite
+*.sqlite3
 .DS_Store
 .env
 
