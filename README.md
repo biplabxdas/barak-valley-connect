@@ -27,6 +27,8 @@ Barak Valley Connect is a local-services directory for Silchar and nearby areas.
 
 The recommendation feature does not call an LLM or a paid AI API. It is a deterministic retrieval and ranking system.
 
+For a short interview-focused explanation, see [INTERVIEW_NOTES.md](INTERVIEW_NOTES.md).
+
 ## How the application fits together
 
 The browser pages in `static/` call same-origin JSON endpoints in `main.py`. FastAPI validates request data, checks the signed-in account and role, then uses `connect_db()` to read or write SQLite or PostgreSQL. The recommendation endpoint loads provider details from that same database before ranking them.
