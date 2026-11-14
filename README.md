@@ -103,7 +103,9 @@ FastAPI's interactive API schema is available at `/docs` on a running instance.
 | `GET /api/provider/requests` | View requests for the signed-in provider's listing |
 | `PATCH /api/provider/requests/{request_id}/status` | Update a request belonging to that provider |
 | `POST/PUT/DELETE /api/providers...` | Owner-only provider listing management |
-| `GET/PATCH/DELETE /api/requests...` | Owner-only request management |
+| `GET /api/requests`, `PATCH /api/requests/{request_id}/status`, `DELETE /api/requests/{request_id}` | Owner-only request review, status updates, and deletion |
+| `GET /api/summary` | Owner dashboard summary |
+| `GET /api/admin/requests.csv` | Owner-only CSV export of service requests |
 
 ## Database
 
